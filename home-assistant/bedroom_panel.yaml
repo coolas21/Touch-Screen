@@ -1,0 +1,82 @@
+# Scenes for the bedroom ESPHome touch panel (esphome/bedroom-panel.yaml).
+# The fan (light.bedroom_fan) and the fridge interior light are deliberately
+# left out of "off" lists.
+script:
+  panel_all_off:
+    alias: "All Off"
+    icon: mdi:power
+    mode: single
+    sequence:
+      - service: light.turn_off
+        target:
+          entity_id: &all_lights
+            - light.bathdimmer_tasmota
+            - light.bathroom_led_tasmota
+            - light.bathswitch_tasmota
+            - light.bed_led
+            - light.bedroom_light
+            - light.lukelamp_tasmota
+            - light.rhodalamp_tasmota
+            - light.fan_light
+            - light.diningroom_switch_tasmota
+            - light.kitchen_dimmer_tasmota
+            - light.kitchen_kitchen_leds
+            - light.sw_kitchen_tasmota
+            - light.livingroom_dimmer_tasmota
+            - light.livingroom_dimmer_2_tasmota
+            - light.sw_front_door_tasmota
+            - light.driveway_sw_tasmota
+            - light.back_yard_sw_tasmota
+            - light.garage_inside_tasmota
+            - light.shoplightsint_tasmota
+            - light.shoplightsext_tasmota
+            - light.pool_lights
+            - light.pool_led
+      - service: switch.turn_off
+        target:
+          entity_id: &all_light_switches
+            - switch.kitchen_acc_tasmota
+            - switch.dinning_acc_tasmota
+            - switch.porch_tasmota
+
+  panel_good_night:
+    alias: "Good Night"
+    icon: mdi:weather-night
+    mode: single
+    sequence:
+      - service: cover.close_cover
+        target:
+          entity_id:
+            - cover.garage_door_1
+            - cover.garage_door_2
+            - cover.garage_door_3
+      - service: light.turn_off
+        target:
+          entity_id: *all_lights
+      - service: switch.turn_off
+        target:
+          entity_id: *all_light_switches
+
+  panel_movie:
+    alias: "Movie"
+    icon: mdi:movie-open
+    mode: single
+    sequence:
+      - service: light.turn_on
+        target:
+          entity_id:
+            - light.livingroom_dimmer_tasmota
+            - light.livingroom_dimmer_2_tasmota
+        data:
+          brightness_pct: 15
+      - service: light.turn_off
+        target:
+          entity_id:
+            - light.diningroom_switch_tasmota
+            - light.sw_kitchen_tasmota
+            - light.kitchen_kitchen_leds
+      - service: switch.turn_off
+        target:
+          entity_id:
+            - switch.kitchen_acc_tasmota
+            - switch.dinning_acc_tasmota

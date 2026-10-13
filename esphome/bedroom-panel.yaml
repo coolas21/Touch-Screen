@@ -1,0 +1,731 @@
+# Bedroom touch panel - Hosyond 4.0" ESP32-32E (ESP32-D0WD-V3, no PSRAM),
+# ST7796S 320x480 SPI LCD + XPT2046 resistive touch.
+# Pinout: https://www.lcdwiki.com/4.0inch_ESP32-32E_Display
+#
+# Tabs: Home (clock, weather, room temps, bedroom controls) | Scenes |
+# Doors (garage 1-3 with confirm) | Reset (direct HTTP Restart to Tasmota
+# devices, works even if HA/MQTT is down) | Setup.
+#
+# HA side: scripts in /homeassistant/packages/bedroom_panel.yaml. After
+# adopting the device in HA, enable "Allow the device to perform Home
+# Assistant actions" in the ESPHome integration's device options, or the
+# scene/door/light buttons do nothing.
+
+substitutions:
+  name: bedroom-panel
+  friendly_name: Bedroom Panel
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    priority: -100
+    then:
+      - light.turn_on:
+          id: backlight
+          brightness: 100%
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+  level: INFO
+
+api:
+  encryption:
+    key: !secret bedroom_panel_api_key
+  on_client_connected:
+    - output.turn_off: led_red
+  on_client_disconnected:
+    - output.turn_on: led_red
+
+ota:
+  - platform: esphome
+    password: !secret bedroom_panel_ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Bedroom Panel Fallback"
+
+captive_portal:
+
+http_request:
+  verify_ssl: false
+  timeout: 5s
+
+time:
+  - platform: homeassistant
+    id: ha_time
+    on_time:
+      - seconds: 0
+        then:
+          - script.execute: update_clock
+    on_time_sync:
+      - script.execute: update_clock
+
+# ---------------------------------------------------------------- hardware
+spi:
+  - id: lcd_spi
+    clk_pin: GPIO14
+    mosi_pin: GPIO13
+    miso_pin: GPIO12
+
+output:
+  - platform: ledc
+    id: backlight_pwm
+    pin: GPIO27
+  # On-board RGB LED is common-anode (on = LOW). Red = no HA connection.
+  - platform: gpio
+    id: led_red
+    pin: { number: GPIO22, inverted: true }
+  - platform: gpio
+    id: led_green
+    pin: { number: GPIO16, inverted: true }
+  - platform: gpio
+    id: led_blue
+    pin: { number: GPIO17, inverted: true }
+
+light:
+  - platform: monochromatic
+    id: backlight
+    name: "Backlight"
+    output: backlight_pwm
+    restore_mode: ALWAYS_ON
+    default_transition_length: 300ms
+
+display:
+  - platform: ili9xxx
+    id: lcd
+    model: ST7796
+    spi_id: lcd_spi
+    cs_pin: GPIO15
+    dc_pin: GPIO2
+    data_rate: 40MHz
+    # Landscape 480x320. If the picture is mirrored/upside down, flip
+    # mirror_x / mirror_y; if colours look inverted, toggle invert_colors.
+    dimensions:
+      width: 480
+      height: 320
+    transform:
+      swap_xy: true
+      mirror_x: true
+      mirror_y: false
+    invert_colors: false
+    color_order: bgr
+    auto_clear_enabled: false
+    update_interval: never
+
+touchscreen:
+  - platform: xpt2046
+    id: touch
+    spi_id: lcd_spi
+    cs_pin: GPIO33
+    interrupt_pin: GPIO36
+    update_interval: 50ms
+    threshold: 400
+    # Typical values for this panel; see README "Touch calibration".
+    calibration:
+      x_min: 280
+      x_max: 3860
+      y_min: 340
+      y_max: 3860
+    transform:
+      swap_xy: true
+      mirror_x: false
+      mirror_y: false
+    on_touch:
+      - logger.log:
+          format: "touch x=%d y=%d raw_x=%d raw_y=%d"
+          args: [touch.x, touch.y, touch.x_raw, touch.y_raw]
+          level: INFO
+      # Any touch wakes the screen. While LVGL is paused (screen off) the
+      # touch is not passed to widgets, so waking never presses a button.
+      - if:
+          condition: lvgl.is_paused
+          then:
+            - lvgl.resume:
+            - lvgl.widget.redraw:
+      - light.turn_on:
+          id: backlight
+          brightness: !lambda return id(screen_brightness) / 100.0;
+
+globals:
+  - id: pending_action
+    type: int
+    initial_value: "0"
+  - id: screen_brightness
+    type: int
+    restore_value: true
+    initial_value: "100"
+
+# ------------------------------------------------------- Home Assistant data
+sensor:
+  - platform: homeassistant
+    id: t_bedroom
+    entity_id: sensor.bedroom_temperature
+    on_value:
+      - lvgl.label.update: { id: lbl_t_bedroom, text: { format: "%.0f°", args: [x] } }
+  - platform: homeassistant
+    id: t_living
+    entity_id: sensor.living_room_temperature
+    on_value:
+      - lvgl.label.update: { id: lbl_t_living, text: { format: "%.0f°", args: [x] } }
+  - platform: homeassistant
+    id: t_upstairs
+    entity_id: sensor.upstairs_temperature
+    on_value:
+      - lvgl.label.update: { id: lbl_t_upstairs, text: { format: "%.0f°", args: [x] } }
+  - platform: homeassistant
+    id: t_outside
+    entity_id: weather.forecast_home
+    attribute: temperature
+    on_value:
+      - lvgl.label.update: { id: lbl_t_outside, text: { format: "%.0f°", args: [x] } }
+  - platform: wifi_signal
+    id: wifi_rssi
+    update_interval: 60s
+    on_value:
+      - lvgl.label.update: { id: lbl_wifi, text: { format: "Wi-Fi: %.0f dBm", args: [x] } }
+
+text_sensor:
+  - platform: homeassistant
+    id: weather_state
+    entity_id: weather.forecast_home
+    on_value:
+      - lvgl.label.update:
+          id: lbl_weather
+          text: !lambda |-
+            std::string s = x;
+            for (auto &c : s) if (c == '-') c = ' ';
+            if (!s.empty()) s[0] = toupper(s[0]);
+            return s;
+  - platform: wifi_info
+    ip_address:
+      id: ip_addr
+      on_value:
+        - lvgl.label.update: { id: lbl_ip, text: { format: "IP: %s", args: ["x.c_str()"] } }
+
+  # Bedroom controls - button shows "checked" (lit) when the light is on.
+  - platform: homeassistant
+    id: st_lamps
+    entity_id: light.bedroom_light
+    on_value:
+      - lvgl.widget.update: { id: btn_lamps, state: { checked: !lambda return x == "on"; } }
+  - platform: homeassistant
+    id: st_bedled
+    entity_id: light.bed_led
+    on_value:
+      - lvgl.widget.update: { id: btn_bedled, state: { checked: !lambda return x == "on"; } }
+  - platform: homeassistant
+    id: st_fan
+    entity_id: light.bedroom_fan
+    on_value:
+      - lvgl.widget.update: { id: btn_fan, state: { checked: !lambda return x == "on"; } }
+
+  # Doors
+  - platform: homeassistant
+    id: st_gd1
+    entity_id: cover.garage_door_1
+    on_value: [ { script.execute: { id: paint_door, door: 1 } } ]
+  - platform: homeassistant
+    id: st_gd2
+    entity_id: cover.garage_door_2
+    on_value: [ { script.execute: { id: paint_door, door: 2 } } ]
+  - platform: homeassistant
+    id: st_gd3
+    entity_id: cover.garage_door_3
+    on_value: [ { script.execute: { id: paint_door, door: 3 } } ]
+  - platform: homeassistant
+    id: st_shop
+    entity_id: cover.shop_door
+    on_value: [ { script.execute: { id: paint_door, door: 4 } } ]
+  - platform: homeassistant
+    id: st_mower
+    entity_id: cover.mower_door
+    on_value: [ { script.execute: { id: paint_door, door: 5 } } ]
+  - platform: homeassistant
+    id: st_chicken
+    entity_id: cover.chicken_coop_door
+    on_value: [ { script.execute: { id: paint_door, door: 6 } } ]
+
+  # Reset list online dots (from HA's view of each device)
+  - platform: homeassistant
+    id: av_bedled
+    entity_id: light.bed_led
+    on_value: [ { lvgl.widget.update: { id: dot_bedled, bg_color: !lambda 'return x == "unavailable" ? lv_color_hex(0xE5534B) : lv_color_hex(0x3FB950);' } } ]
+  - platform: homeassistant
+    id: av_shopint
+    entity_id: light.shoplightsint_tasmota
+    on_value: [ { lvgl.widget.update: { id: dot_shopint, bg_color: !lambda 'return x == "unavailable" ? lv_color_hex(0xE5534B) : lv_color_hex(0x3FB950);' } } ]
+  - platform: homeassistant
+    id: av_shopext
+    entity_id: light.shoplightsext_tasmota
+    on_value: [ { lvgl.widget.update: { id: dot_shopext, bg_color: !lambda 'return x == "unavailable" ? lv_color_hex(0xE5534B) : lv_color_hex(0x3FB950);' } } ]
+  - platform: homeassistant
+    id: av_shopos
+    entity_id: cover.shop_door
+    on_value: [ { lvgl.widget.update: { id: dot_shopos, bg_color: !lambda 'return x == "unavailable" ? lv_color_hex(0xE5534B) : lv_color_hex(0x3FB950);' } } ]
+  - platform: homeassistant
+    id: av_chicken
+    entity_id: cover.chicken_coop_door
+    on_value: [ { lvgl.widget.update: { id: dot_chicken, bg_color: !lambda 'return x == "unavailable" ? lv_color_hex(0xE5534B) : lv_color_hex(0x3FB950);' } } ]
+  - platform: homeassistant
+    id: av_pool
+    entity_id: light.pool_lights
+    on_value: [ { lvgl.widget.update: { id: dot_pool, bg_color: !lambda 'return x == "unavailable" ? lv_color_hex(0xE5534B) : lv_color_hex(0x3FB950);' } } ]
+
+# ------------------------------------------------------------------ scripts
+script:
+  - id: update_clock
+    then:
+      - lvgl.label.update:
+          id: lbl_clock
+          text: !lambda |-
+            auto t = id(ha_time).now();
+            if (!t.is_valid()) return std::string("--:--");
+            int h = t.hour % 12; if (h == 0) h = 12;
+            char b[8]; snprintf(b, sizeof(b), "%d:%02d", h, t.minute);
+            return std::string(b);
+      - lvgl.label.update:
+          id: lbl_date
+          text: !lambda |-
+            auto t = id(ha_time).now();
+            if (!t.is_valid()) return std::string("");
+            return t.strftime("%a %b %d");
+
+  - id: paint_door
+    mode: queued
+    parameters:
+      door: int
+    then:
+      - lambda: |-
+          std::string s; lv_obj_t *lbl = nullptr;
+          switch (door) {
+            case 1: s = id(st_gd1).state; lbl = id(lbl_gd1); break;
+            case 2: s = id(st_gd2).state; lbl = id(lbl_gd2); break;
+            case 3: s = id(st_gd3).state; lbl = id(lbl_gd3); break;
+            case 4: s = id(st_shop).state; lbl = id(lbl_shop); break;
+            case 5: s = id(st_mower).state; lbl = id(lbl_mower); break;
+            case 6: s = id(st_chicken).state; lbl = id(lbl_chicken); break;
+          }
+          if (!lbl) return;
+          std::string t = s; if (!t.empty()) t[0] = toupper(t[0]);
+          lv_label_set_text(lbl, t.c_str());
+          uint32_t col = 0x8B949E;                       // grey: unknown/unavailable
+          if (s == "closed") col = 0x3FB950;             // green
+          else if (s == "open" || s == "opening" || s == "closing" || s == "stopped") col = 0xE5534B;  // red
+          lv_obj_set_style_text_color(lbl, lv_color_hex(col), 0);
+
+  # Opens the confirm dialog for action N with the given question.
+  - id: ask
+    parameters:
+      action: int
+      question: string
+    then:
+      - globals.set: { id: pending_action, value: !lambda return action; }
+      - lvgl.label.update: { id: lbl_confirm, text: !lambda return question; }
+      - lvgl.widget.show: dlg_confirm
+
+  - id: run_pending
+    then:
+      - lambda: |-
+          switch (id(pending_action)) {
+            case 1: id(rst_bedled).execute(); break;
+            case 2: id(rst_shopint).execute(); break;
+            case 3: id(rst_shopext).execute(); break;
+            case 4: id(rst_shopos).execute(); break;
+            case 5: id(rst_chicken).execute(); break;
+            case 6: id(rst_pool).execute(); break;
+            case 11: id(tog_gd1).execute(); break;
+            case 12: id(tog_gd2).execute(); break;
+            case 13: id(tog_gd3).execute(); break;
+          }
+          id(pending_action) = 0;
+
+  # Direct-to-device restarts (no HA/MQTT needed)
+  - id: rst_bedled
+    then: [ { http_request.get: { url: "http://192.168.1.54/cm?cmnd=Restart%201" } } ]
+  - id: rst_shopint
+    then: [ { http_request.get: { url: "http://192.168.1.38/cm?cmnd=Restart%201" } } ]
+  - id: rst_shopext
+    then: [ { http_request.get: { url: "http://192.168.1.37/cm?cmnd=Restart%201" } } ]
+  - id: rst_shopos
+    then: [ { http_request.get: { url: "http://192.168.1.39/cm?cmnd=Restart%201" } } ]
+  - id: rst_chicken
+    then: [ { http_request.get: { url: "http://192.168.1.46/cm?cmnd=Restart%201" } } ]
+  - id: rst_pool
+    then: [ { http_request.get: { url: "http://192.168.1.45/cm?cmnd=Restart%201" } } ]
+
+  - id: tog_gd1
+    then: [ { homeassistant.action: { action: cover.toggle, data: { entity_id: cover.garage_door_1 } } } ]
+  - id: tog_gd2
+    then: [ { homeassistant.action: { action: cover.toggle, data: { entity_id: cover.garage_door_2 } } } ]
+  - id: tog_gd3
+    then: [ { homeassistant.action: { action: cover.toggle, data: { entity_id: cover.garage_door_3 } } } ]
+
+# --------------------------------------------------------------------- UI
+font:
+  - file: "gfonts://Roboto"
+    id: f_clock
+    size: 64
+    glyphs: "0123456789:- "
+  - file: "gfonts://Roboto"
+    id: f_temp
+    size: 30
+    glyphs: "0123456789-°. "
+
+lvgl:
+  displays: [lcd]
+  touchscreens: [touch]
+  buffer_size: 25%          # no PSRAM - draw the screen in slices (ESPHome's recommended value)
+  default_font: montserrat_16
+  theme:
+    obj:
+      bg_color: 0x0F1720
+      text_color: 0xE6EDF3
+      border_width: 0
+    button:
+      bg_color: 0x1F2A36
+      radius: 14
+      text_color: 0xE6EDF3
+      checked:
+        bg_color: 0xD29922
+        text_color: 0x0F1720
+      pressed:
+        bg_color: 0x2F81F7
+    label:
+      text_color: 0xE6EDF3
+  style_definitions:
+    - id: card
+      bg_color: 0x161E27
+      radius: 14
+      pad_all: 8
+    - id: dim
+      text_color: 0x8B949E
+  on_idle:
+    - timeout: 60s
+      then:
+        - light.turn_on: { id: backlight, brightness: 15% }
+    - timeout: 300s
+      then:
+        - light.turn_off: backlight
+        - lvgl.pause:
+
+  top_layer:
+    widgets:
+      - obj:
+          id: dlg_confirm
+          hidden: true
+          width: 100%
+          height: 100%
+          bg_color: 0x000000
+          bg_opa: 70%
+          widgets:
+            - obj:
+                align: CENTER
+                width: 380
+                height: 190
+                bg_color: 0x1F2A36
+                radius: 16
+                widgets:
+                  - label:
+                      id: lbl_confirm
+                      align: TOP_MID
+                      y: 18
+                      text_font: montserrat_22
+                      text: "Are you sure?"
+                  - button:
+                      align: BOTTOM_LEFT
+                      x: 20
+                      y: -16
+                      width: 150
+                      height: 60
+                      bg_color: 0xD29922
+                      widgets: [ { label: { align: CENTER, text: "Yes", text_color: 0x0F1720, text_font: montserrat_22 } } ]
+                      on_click:
+                        - lvgl.widget.hide: dlg_confirm
+                        - script.execute: run_pending
+                  - button:
+                      align: BOTTOM_RIGHT
+                      x: -20
+                      y: -16
+                      width: 150
+                      height: 60
+                      widgets: [ { label: { align: CENTER, text: "Cancel", text_font: montserrat_22 } } ]
+                      on_click:
+                        - lvgl.widget.hide: dlg_confirm
+                        - globals.set: { id: pending_action, value: "0" }
+
+  pages:
+    - id: main_page
+      widgets:
+        - tabview:
+            id: tabs
+            width: 100%
+            height: 100%
+            position: BOTTOM
+            size: 46
+            tabs:
+              # ----------------------------------------------------- HOME
+              - name: "Home"
+                id: tab_home
+                widgets:
+                  - label: { id: lbl_clock, x: 6, y: 0, text_font: f_clock, text: "--:--" }
+                  - label: { id: lbl_date, x: 10, y: 72, styles: dim, text_font: montserrat_18, text: "" }
+                  - obj:
+                      styles: card
+                      x: 270
+                      y: 4
+                      width: 180
+                      height: 92
+                      widgets:
+                        - label: { id: lbl_t_outside, align: TOP_LEFT, text_font: f_temp, text: "--°" }
+                        - label: { id: lbl_weather, align: BOTTOM_LEFT, styles: dim, text: "" }
+                        - label: { align: TOP_RIGHT, styles: dim, text: "Outside" }
+                  - obj:
+                      styles: card
+                      x: 0
+                      y: 104
+                      width: 146
+                      height: 64
+                      widgets:
+                        - label: { align: TOP_LEFT, styles: dim, text_font: montserrat_14, text: "Bedroom" }
+                        - label: { id: lbl_t_bedroom, align: BOTTOM_RIGHT, text_font: f_temp, text: "--°" }
+                  - obj:
+                      styles: card
+                      x: 152
+                      y: 104
+                      width: 146
+                      height: 64
+                      widgets:
+                        - label: { align: TOP_LEFT, styles: dim, text_font: montserrat_14, text: "Living" }
+                        - label: { id: lbl_t_living, align: BOTTOM_RIGHT, text_font: f_temp, text: "--°" }
+                  - obj:
+                      styles: card
+                      x: 304
+                      y: 104
+                      width: 146
+                      height: 64
+                      widgets:
+                        - label: { align: TOP_LEFT, styles: dim, text_font: montserrat_14, text: "Upstairs" }
+                        - label: { id: lbl_t_upstairs, align: BOTTOM_RIGHT, text_font: f_temp, text: "--°" }
+                  - button:
+                      id: btn_lamps
+                      x: 0
+                      y: 178
+                      width: 146
+                      height: 74
+                      widgets: [ { label: { align: CENTER, text: "Lamps", text_font: montserrat_20 } } ]
+                      on_click:
+                        - homeassistant.action: { action: light.toggle, data: { entity_id: light.bedroom_light } }
+                  - button:
+                      id: btn_bedled
+                      x: 152
+                      y: 178
+                      width: 146
+                      height: 74
+                      widgets: [ { label: { align: CENTER, text: "Bed LED", text_font: montserrat_20 } } ]
+                      on_click:
+                        - homeassistant.action: { action: light.toggle, data: { entity_id: light.bed_led } }
+                  - button:
+                      id: btn_fan
+                      x: 304
+                      y: 178
+                      width: 146
+                      height: 74
+                      widgets: [ { label: { align: CENTER, text: "Fan", text_font: montserrat_20 } } ]
+                      on_click:
+                        - homeassistant.action: { action: light.toggle, data: { entity_id: light.bedroom_fan } }
+
+              # --------------------------------------------------- SCENES
+              - name: "Scenes"
+                widgets:
+                  - button:
+                      x: 0
+                      y: 6
+                      width: 450
+                      height: 76
+                      widgets: [ { label: { align: CENTER, text: "Good Night", text_font: montserrat_26 } } ]
+                      on_click:
+                        - homeassistant.action: { action: script.turn_on, data: { entity_id: script.panel_good_night } }
+                  - button:
+                      x: 0
+                      y: 90
+                      width: 450
+                      height: 76
+                      widgets: [ { label: { align: CENTER, text: "Movie", text_font: montserrat_26 } } ]
+                      on_click:
+                        - homeassistant.action: { action: script.turn_on, data: { entity_id: script.panel_movie } }
+                  - button:
+                      x: 0
+                      y: 174
+                      width: 450
+                      height: 76
+                      widgets: [ { label: { align: CENTER, text: "All Off", text_font: montserrat_26 } } ]
+                      on_click:
+                        - homeassistant.action: { action: script.turn_on, data: { entity_id: script.panel_all_off } }
+
+              # ---------------------------------------------------- DOORS
+              - name: "Doors"
+                widgets:
+                  - button:
+                      x: 0
+                      y: 4
+                      width: 146
+                      height: 120
+                      widgets:
+                        - label: { align: TOP_MID, y: 6, text: "Garage 1", text_font: montserrat_18 }
+                        - label: { id: lbl_gd1, align: BOTTOM_MID, y: -8, text: "--", text_font: montserrat_22 }
+                      on_click:
+                        - script.execute:
+                            id: ask
+                            action: 11
+                            question: !lambda 'return id(st_gd1).state == "closed" ? std::string("Open Garage Door 1?") : std::string("Close Garage Door 1?");'
+                  - button:
+                      x: 152
+                      y: 4
+                      width: 146
+                      height: 120
+                      widgets:
+                        - label: { align: TOP_MID, y: 6, text: "Garage 2", text_font: montserrat_18 }
+                        - label: { id: lbl_gd2, align: BOTTOM_MID, y: -8, text: "--", text_font: montserrat_22 }
+                      on_click:
+                        - script.execute:
+                            id: ask
+                            action: 12
+                            question: !lambda 'return id(st_gd2).state == "closed" ? std::string("Open Garage Door 2?") : std::string("Close Garage Door 2?");'
+                  - button:
+                      x: 304
+                      y: 4
+                      width: 146
+                      height: 120
+                      widgets:
+                        - label: { align: TOP_MID, y: 6, text: "Garage 3", text_font: montserrat_18 }
+                        - label: { id: lbl_gd3, align: BOTTOM_MID, y: -8, text: "--", text_font: montserrat_22 }
+                      on_click:
+                        - script.execute:
+                            id: ask
+                            action: 13
+                            question: !lambda 'return id(st_gd3).state == "closed" ? std::string("Open Garage Door 3?") : std::string("Close Garage Door 3?");'
+                  # status only
+                  - obj:
+                      styles: card
+                      x: 0
+                      y: 134
+                      width: 146
+                      height: 110
+                      widgets:
+                        - label: { align: TOP_MID, styles: dim, text: "Shop Door" }
+                        - label: { id: lbl_shop, align: BOTTOM_MID, text: "--", text_font: montserrat_22 }
+                  - obj:
+                      styles: card
+                      x: 152
+                      y: 134
+                      width: 146
+                      height: 110
+                      widgets:
+                        - label: { align: TOP_MID, styles: dim, text: "Mower Door" }
+                        - label: { id: lbl_mower, align: BOTTOM_MID, text: "--", text_font: montserrat_22 }
+                  - obj:
+                      styles: card
+                      x: 304
+                      y: 134
+                      width: 146
+                      height: 110
+                      widgets:
+                        - label: { align: TOP_MID, styles: dim, text: "Chicken Door" }
+                        - label: { id: lbl_chicken, align: BOTTOM_MID, text: "--", text_font: montserrat_22 }
+
+              # ---------------------------------------------------- RESET
+              - name: "Reset"
+                widgets:
+                  - obj:
+                      width: 100%
+                      height: 100%
+                      pad_all: 0
+                      layout:
+                        type: GRID
+                        grid_columns: [FR(1), FR(1)]
+                        grid_rows: [FR(1), FR(1), FR(1)]
+                        pad_row: 8
+                        pad_column: 8
+                      widgets:
+                        - button:
+                            grid_cell_column_pos: 0
+                            grid_cell_row_pos: 0
+                            grid_cell_x_align: STRETCH
+                            grid_cell_y_align: STRETCH
+                            widgets:
+                              - obj: { id: dot_bedled, align: LEFT_MID, width: 14, height: 14, radius: 7, bg_color: 0x8B949E }
+                              - label: { align: LEFT_MID, x: 24, text: "BedLED", text_font: montserrat_20 }
+                            on_click: [ { script.execute: { id: ask, action: 1, question: "Restart BedLED?" } } ]
+                        - button:
+                            grid_cell_column_pos: 1
+                            grid_cell_row_pos: 0
+                            grid_cell_x_align: STRETCH
+                            grid_cell_y_align: STRETCH
+                            widgets:
+                              - obj: { id: dot_shopint, align: LEFT_MID, width: 14, height: 14, radius: 7, bg_color: 0x8B949E }
+                              - label: { align: LEFT_MID, x: 24, text: "Shop Lights Int", text_font: montserrat_20 }
+                            on_click: [ { script.execute: { id: ask, action: 2, question: "Restart Shop Lights Int?" } } ]
+                        - button:
+                            grid_cell_column_pos: 0
+                            grid_cell_row_pos: 1
+                            grid_cell_x_align: STRETCH
+                            grid_cell_y_align: STRETCH
+                            widgets:
+                              - obj: { id: dot_shopext, align: LEFT_MID, width: 14, height: 14, radius: 7, bg_color: 0x8B949E }
+                              - label: { align: LEFT_MID, x: 24, text: "Shop Lights Ext", text_font: montserrat_20 }
+                            on_click: [ { script.execute: { id: ask, action: 3, question: "Restart Shop Lights Ext?" } } ]
+                        - button:
+                            grid_cell_column_pos: 1
+                            grid_cell_row_pos: 1
+                            grid_cell_x_align: STRETCH
+                            grid_cell_y_align: STRETCH
+                            widgets:
+                              - obj: { id: dot_shopos, align: LEFT_MID, width: 14, height: 14, radius: 7, bg_color: 0x8B949E }
+                              - label: { align: LEFT_MID, x: 24, text: "ShopOS", text_font: montserrat_20 }
+                            on_click: [ { script.execute: { id: ask, action: 4, question: "Restart ShopOS?" } } ]
+                        - button:
+                            grid_cell_column_pos: 0
+                            grid_cell_row_pos: 2
+                            grid_cell_x_align: STRETCH
+                            grid_cell_y_align: STRETCH
+                            widgets:
+                              - obj: { id: dot_chicken, align: LEFT_MID, width: 14, height: 14, radius: 7, bg_color: 0x8B949E }
+                              - label: { align: LEFT_MID, x: 24, text: "Chicken Door", text_font: montserrat_20 }
+                            on_click: [ { script.execute: { id: ask, action: 5, question: "Restart Chicken Door?" } } ]
+                        - button:
+                            grid_cell_column_pos: 1
+                            grid_cell_row_pos: 2
+                            grid_cell_x_align: STRETCH
+                            grid_cell_y_align: STRETCH
+                            widgets:
+                              - obj: { id: dot_pool, align: LEFT_MID, width: 14, height: 14, radius: 7, bg_color: 0x8B949E }
+                              - label: { align: LEFT_MID, x: 24, text: "Pool", text_font: montserrat_20 }
+                            on_click: [ { script.execute: { id: ask, action: 6, question: "Restart Pool?" } } ]
+
+              # ---------------------------------------------------- SETUP
+              - name: "Setup"
+                widgets:
+                  - label: { x: 0, y: 4, text: "Screen brightness", text_font: montserrat_18 }
+                  - slider:
+                      id: sld_brightness
+                      x: 10
+                      y: 40
+                      width: 430
+                      height: 26
+                      min_value: 10
+                      max_value: 100
+                      value: 100
+                      on_release:
+                        - globals.set: { id: screen_brightness, value: !lambda return int(x); }
+                        - light.turn_on: { id: backlight, brightness: !lambda return x / 100.0; }
+                  - label: { id: lbl_wifi, x: 0, y: 96, styles: dim, text: "Wi-Fi: --" }
+                  - label: { id: lbl_ip, x: 0, y: 124, styles: dim, text: "IP: --" }
+                  - label: { x: 0, y: 152, styles: dim, text: "Dims after 1 min, off after 5 min. Touch to wake." }
+                  - label: { x: 0, y: 180, styles: dim, text: "LED red = not connected to Home Assistant." }
