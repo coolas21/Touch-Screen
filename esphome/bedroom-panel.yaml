@@ -277,17 +277,41 @@ text_sensor:
     id: hv_bed
     entity_id: climate.bedroom
     attribute: hvac_action
-    on_value: [ { script.execute: paint_colors } ]
+    on_value:
+      - lvgl.label.update:
+          id: ico_bed
+          text: !lambda |-
+            if (x == "heating") return std::string("\U000F0238");
+            if (x == "cooling") return std::string("\U000F0717");
+            if (x == "fan") return std::string("\U000F0210");
+            return std::string("");
+      - script.execute: paint_colors
   - platform: homeassistant
     id: hv_liv
     entity_id: climate.living_room
     attribute: hvac_action
-    on_value: [ { script.execute: paint_colors } ]
+    on_value:
+      - lvgl.label.update:
+          id: ico_liv
+          text: !lambda |-
+            if (x == "heating") return std::string("\U000F0238");
+            if (x == "cooling") return std::string("\U000F0717");
+            if (x == "fan") return std::string("\U000F0210");
+            return std::string("");
+      - script.execute: paint_colors
   - platform: homeassistant
     id: hv_up
     entity_id: climate.upstairs
     attribute: hvac_action
-    on_value: [ { script.execute: paint_colors } ]
+    on_value:
+      - lvgl.label.update:
+          id: ico_up
+          text: !lambda |-
+            if (x == "heating") return std::string("\U000F0238");
+            if (x == "cooling") return std::string("\U000F0717");
+            if (x == "fan") return std::string("\U000F0210");
+            return std::string("");
+      - script.execute: paint_colors
   - platform: homeassistant
     id: weather_state
     entity_id: weather.forecast_home
@@ -694,6 +718,15 @@ font:
     size: 30
     glyphs: "0123456789-°. "
 
+  # Material Design Icons: flame (heat), snowflake (cool), fan
+  - file:
+      type: web
+      url: "https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.ttf"
+    id: f_icons
+    size: 22
+    bpp: 4
+    glyphs: ["\U000F0238", "\U000F0717", "\U000F0210"]
+
 lvgl:
   displays: [lcd]
   touchscreens: [touch]
@@ -853,6 +886,7 @@ lvgl:
                       height: 64
                       widgets:
                         - label: { align: TOP_LEFT, styles: dim, text_font: montserrat_14, text: "Bedroom" }
+                        - label: { id: ico_bed, align: TOP_RIGHT, text_font: f_icons, text: "" }
                         - label: { id: lbl_t_bedroom, align: BOTTOM_RIGHT, text_font: f_temp, text: "--°" }
                   - obj:
                       id: card_liv
@@ -863,6 +897,7 @@ lvgl:
                       height: 64
                       widgets:
                         - label: { align: TOP_LEFT, styles: dim, text_font: montserrat_14, text: "Living" }
+                        - label: { id: ico_liv, align: TOP_RIGHT, text_font: f_icons, text: "" }
                         - label: { id: lbl_t_living, align: BOTTOM_RIGHT, text_font: f_temp, text: "--°" }
                   - obj:
                       id: card_up
@@ -873,6 +908,7 @@ lvgl:
                       height: 64
                       widgets:
                         - label: { align: TOP_LEFT, styles: dim, text_font: montserrat_14, text: "Upstairs" }
+                        - label: { id: ico_up, align: TOP_RIGHT, text_font: f_icons, text: "" }
                         - label: { id: lbl_t_upstairs, align: BOTTOM_RIGHT, text_font: f_temp, text: "--°" }
                   - button:
                       id: btn_lamps
