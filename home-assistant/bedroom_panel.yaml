@@ -1,6 +1,6 @@
 # Scenes for the bedroom ESPHome touch panel (esphome/bedroom-panel.yaml).
-# The fan (light.bedroom_fan) and the fridge interior light are deliberately
-# left out of "off" lists.
+# Never turned off by these scenes: bedroom fan, fridge light, Bathroom LED
+# (light.bathroom_led_tasmota) and the kitchen WLED strip (handled separately).
 script:
   panel_all_off:
     alias: "All Off"
@@ -9,9 +9,8 @@ script:
     sequence:
       - service: light.turn_off
         target:
-          entity_id: &all_lights
+          entity_id: &off_lights
             - light.bathdimmer_tasmota
-            - light.bathroom_led_tasmota
             - light.bathswitch_tasmota
             - light.bed_led
             - light.bedroom_light
@@ -20,7 +19,6 @@ script:
             - light.fan_light
             - light.diningroom_switch_tasmota
             - light.kitchen_dimmer_tasmota
-            - light.kitchen_kitchen_leds
             - light.sw_kitchen_tasmota
             - light.livingroom_dimmer_tasmota
             - light.livingroom_dimmer_2_tasmota
@@ -34,7 +32,7 @@ script:
             - light.pool_led
       - service: switch.turn_off
         target:
-          entity_id: &all_light_switches
+          entity_id: &off_light_switches
             - switch.kitchen_acc_tasmota
             - switch.dinning_acc_tasmota
             - switch.porch_tasmota
@@ -52,31 +50,55 @@ script:
             - cover.garage_door_3
       - service: light.turn_off
         target:
-          entity_id: *all_lights
+          entity_id: *off_lights
       - service: switch.turn_off
         target:
-          entity_id: *all_light_switches
+          entity_id: *off_light_switches
+      # Kitchen WLED to the red nightlight (same as the 10:30pm automation in
+      # evening_schedule.yaml); Bathroom LED is left as it is.
+      - service: light.turn_on
+        target:
+          entity_id: light.kitchen_kitchen_leds
+        data:
+          rgb_color: [255, 0, 0]
+          brightness: 100
+      - service: switch.turn_on
+        target:
+          entity_id: switch.kitchen_kitchen_leds_nightlight
 
   panel_movie:
     alias: "Movie"
     icon: mdi:movie-open
     mode: single
     sequence:
+      # Living room fades down over ~0.7s, then off.
       - service: light.turn_on
         target:
-          entity_id:
+          entity_id: &living_room
             - light.livingroom_dimmer_tasmota
             - light.livingroom_dimmer_2_tasmota
         data:
-          brightness_pct: 15
+          brightness_pct: 50
+      - delay: { milliseconds: 250 }
+      - service: light.turn_on
+        target:
+          entity_id: *living_room
+        data:
+          brightness_pct: 20
+      - delay: { milliseconds: 250 }
+      - service: light.turn_on
+        target:
+          entity_id: *living_room
+        data:
+          brightness_pct: 5
+      - delay: { milliseconds: 200 }
       - service: light.turn_off
         target:
-          entity_id:
-            - light.diningroom_switch_tasmota
-            - light.sw_kitchen_tasmota
-            - light.kitchen_kitchen_leds
+          entity_id: *living_room
+      # Dining room off; kitchen and foyer are left alone.
+      - service: light.turn_off
+        target:
+          entity_id: light.diningroom_switch_tasmota
       - service: switch.turn_off
         target:
-          entity_id:
-            - switch.kitchen_acc_tasmota
-            - switch.dinning_acc_tasmota
+          entity_id: switch.dinning_acc_tasmota

@@ -9,13 +9,13 @@ Hardware reference: <https://www.lcdwiki.com/4.0inch_ESP32-32E_Display>
 | Tab | What it does |
 |---|---|
 | **Home** | Clock and date, outside temperature and weather, Bedroom / Living / Upstairs temperatures, and buttons for the bedroom Lamps, Bed LED and Fan (lit when on). |
-| **Scenes** | Good Night, Movie, All Off (Home Assistant scripts in `home-assistant/bedroom_panel.yaml`). |
+| **Scenes** | **Good Night**: closes Garage 1-3, all lights off except the Bathroom LED, kitchen WLED to the red nightlight. **Movie**: fades the living room down over about 0.7 s and off, dining room off (kitchen and foyer untouched). **All Off** (asks first): all lights off except the Bathroom LED and kitchen WLED. Scripts are in `home-assistant/bedroom_panel.yaml`. |
 | **Doors** | Garage 1/2/3: tap to open or close, with a confirmation step. Shop, Mower and Chicken doors show status only. Green = closed, red = open. |
 | **Cams** | Front Door and Driveway snapshot buttons. The snapshot also **pops up automatically** when the doorbell rings or a person is detected on the driveway: the screen wakes, shows the picture (fetched again after 5 s), and closes after 45 s or on tap. |
 | **Reset** | Restarts flaky Tasmota devices (BedLED, Shop Lights Int/Ext, ShopOS, Chicken Door, Pool). Sends `Restart 1` **directly to the device over HTTP**, so it works even if Home Assistant or MQTT is down. The dot shows online (green) or offline (red) as Home Assistant sees it. Every restart asks for confirmation. |
-| **Setup** | Screen brightness, accent light (on/off, brightness, Warm/Red/Blue/Purple, Breathe), Wi-Fi signal, IP address. |
+| **Setup** | **Display** brightness, **Dark Mode** (dark navy theme; off = white look) and **Auto at night** (dark from sunset to sunrise), accent light (**LED On / Off**, brightness, Warm/Teal/Blue/Purple, Breathe), Wi-Fi signal, IP address. |
 
-The screen dims after 1 minute and turns off after 5 minutes. A touch wakes it, and the wake-up touch never presses a button.
+The screen dims after 1 minute and turns off after 5 minutes. Once it has dimmed, the **first tap only wakes it** to full brightness, and the next tap selects.
 A red **No HA** badge shows in the top-right corner when the panel isn't connected to Home Assistant. The board's RGB LED is an **accent light** (Setup tab or the "Accent Light" entity in HA).
 
 ## Files

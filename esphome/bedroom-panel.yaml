@@ -24,6 +24,7 @@ esphome:
       - light.turn_on:
           id: backlight
           brightness: 100%
+      - script.execute: apply_theme
 
 esp32:
   board: esp32dev
@@ -191,6 +192,16 @@ globals:
   - id: cam_selected
     type: int
     initial_value: "1"
+  # This panel shows true colours (the dark navy theme) with the display
+  # inverted; un-inverted it shows a white "light" look.
+  - id: dark_mode
+    type: bool
+    restore_value: true
+    initial_value: "true"
+  - id: dark_auto
+    type: bool
+    restore_value: true
+    initial_value: "true"
 
 # ------------------------------------------------------- Home Assistant data
 sensor:
@@ -250,6 +261,18 @@ text_sensor:
     id: pic_drive
     entity_id: camera.driveway
     attribute: entity_picture
+  # Dark Mode follows the sun when "Auto at night" is on. Fires only on a
+  # change, so a manual tap holds until the next sunrise/sunset.
+  - platform: homeassistant
+    id: sun_state
+    entity_id: sun.sun
+    on_value:
+      - if:
+          condition:
+            lambda: return id(dark_auto);
+          then:
+            - globals.set: { id: dark_mode, value: !lambda 'return x == "below_horizon";' }
+            - script.execute: apply_theme
   - platform: homeassistant
     id: weather_state
     entity_id: weather.forecast_home
@@ -358,6 +381,12 @@ online_image:
 
 # ------------------------------------------------------------------ scripts
 script:
+  - id: apply_theme
+    then:
+      - lambda: id(lcd).invert_colors(id(dark_mode));
+      - lvgl.widget.update: { id: btn_dark, state: { checked: !lambda return id(dark_mode); } }
+      - lvgl.widget.update: { id: btn_dark_auto, state: { checked: !lambda return id(dark_auto); } }
+
   # Show camera 1 (Front Door) or 2 (Driveway); wakes the screen if needed.
   - id: show_cam
     mode: restart
@@ -365,6 +394,8 @@ script:
       cam: int
     then:
       - globals.set: { id: cam_selected, value: !lambda return cam; }
+      # Snapshots must show true colours even when the white look is active.
+      - lambda: id(lcd).invert_colors(true);
       - if:
           condition: lvgl.is_paused
           then:
@@ -379,6 +410,7 @@ script:
           text: !lambda 'return id(cam_selected) == 1 ? std::string("Front Door") : std::string("Driveway");'
       - lvgl.label.update: { id: lbl_cam_status, text: "Loading..." }
       - lvgl.widget.show: lbl_cam_status
+      - lvgl.widget.hide: wake_shield
       - lvgl.widget.show: dlg_cam
       - script.execute: fetch_cam
       - delay: 5s
@@ -399,6 +431,7 @@ script:
     then:
       - script.stop: show_cam
       - lvgl.widget.hide: dlg_cam
+      - script.execute: apply_theme
       - if:
           condition:
             lambda: return id(cam_woke_screen);
@@ -470,6 +503,7 @@ script:
             case 11: id(tog_gd1).execute(); break;
             case 12: id(tog_gd2).execute(); break;
             case 13: id(tog_gd3).execute(); break;
+            case 21: id(scene_all_off).execute(); break;
           }
           id(pending_action) = 0;
 
@@ -491,6 +525,9 @@ script:
     then: [ { homeassistant.action: { action: cover.toggle, data: { entity_id: cover.garage_door_1 } } } ]
   - id: tog_gd2
     then: [ { homeassistant.action: { action: cover.toggle, data: { entity_id: cover.garage_door_2 } } } ]
+  - id: scene_all_off
+    then: [ { homeassistant.action: { action: script.turn_on, data: { entity_id: script.panel_all_off } } } ]
+
   - id: tog_gd3
     then: [ { homeassistant.action: { action: cover.toggle, data: { entity_id: cover.garage_door_3 } } } ]
 
@@ -537,6 +574,8 @@ lvgl:
     - timeout: 60s
       then:
         - light.turn_on: { id: backlight, brightness: 15% }
+        # From here the first tap only wakes the screen (see wake_shield).
+        - lvgl.widget.show: wake_shield
     - timeout: 300s
       then:
         - light.turn_off: backlight
@@ -612,6 +651,19 @@ lvgl:
                       on_click:
                         - lvgl.widget.hide: dlg_confirm
                         - globals.set: { id: pending_action, value: "0" }
+      # Invisible full-screen cover, shown once the screen dims. It catches
+      # the first tap so waking never presses whatever is underneath.
+      - obj:
+          id: wake_shield
+          hidden: true
+          width: 100%
+          height: 100%
+          bg_opa: TRANSP
+          on_press:
+            - lvgl.widget.hide: wake_shield
+            - light.turn_on:
+                id: backlight
+                brightness: !lambda return id(screen_brightness) / 100.0;
 
   pages:
     - id: main_page
@@ -719,8 +771,7 @@ lvgl:
                       width: 450
                       height: 76
                       widgets: [ { label: { align: CENTER, text: "All Off", text_font: montserrat_26 } } ]
-                      on_click:
-                        - homeassistant.action: { action: script.turn_on, data: { entity_id: script.panel_all_off } }
+                      on_click: [ { script.execute: { id: ask, action: 21, question: "Turn everything off?" } } ]
 
               # ---------------------------------------------------- DOORS
               - name: "Doors"
@@ -883,7 +934,7 @@ lvgl:
               # ---------------------------------------------------- SETUP
               - name: "Setup"
                 widgets:
-                  - label: { x: 0, y: 0, text: "Screen brightness", text_font: montserrat_18 }
+                  - label: { x: 0, y: 0, text: "Display", text_font: montserrat_18 }
                   - slider:
                       id: sld_brightness
                       x: 10
@@ -896,19 +947,44 @@ lvgl:
                       on_release:
                         - globals.set: { id: screen_brightness, value: !lambda return int(x); }
                         - light.turn_on: { id: backlight, brightness: !lambda return x / 100.0; }
-                  - label: { x: 0, y: 70, text: "Accent light", text_font: montserrat_18 }
+                  - button:
+                      id: btn_dark
+                      x: 0
+                      y: 62
+                      width: 150
+                      height: 38
+                      widgets: [ { label: { align: CENTER, text: "Dark Mode" } } ]
+                      on_click:
+                        - globals.set: { id: dark_mode, value: !lambda return !id(dark_mode); }
+                        - script.execute: apply_theme
+                  - button:
+                      id: btn_dark_auto
+                      x: 160
+                      y: 62
+                      width: 150
+                      height: 38
+                      widgets: [ { label: { align: CENTER, text: "Auto at night" } } ]
+                      on_click:
+                        - globals.set: { id: dark_auto, value: !lambda return !id(dark_auto); }
+                        - if:
+                            condition:
+                              lambda: return id(dark_auto);
+                            then:
+                              - globals.set: { id: dark_mode, value: !lambda 'return id(sun_state).state == "below_horizon";' }
+                        - script.execute: apply_theme
+                  - label: { x: 0, y: 116, text: "Accent light", text_font: montserrat_18 }
                   - button:
                       id: btn_accent
-                      x: 330
-                      y: 62
-                      width: 120
+                      x: 310
+                      y: 108
+                      width: 140
                       height: 38
-                      widgets: [ { label: { align: CENTER, text: "On / Off" } } ]
+                      widgets: [ { label: { align: CENTER, text: "LED On / Off" } } ]
                       on_click: [ { light.toggle: accent } ]
                   - slider:
                       id: sld_accent
                       x: 10
-                      y: 112
+                      y: 154
                       width: 430
                       height: 22
                       min_value: 5
@@ -918,42 +994,42 @@ lvgl:
                         - light.turn_on: { id: accent, brightness: !lambda return x / 100.0; }
                   - button:
                       x: 0
-                      y: 148
+                      y: 186
                       width: 84
-                      height: 44
+                      height: 40
                       bg_color: 0xFFB347
                       widgets: [ { label: { align: CENTER, text: "Warm", text_color: 0x0F1720 } } ]
                       on_click: [ { light.turn_on: { id: accent, red: 100%, green: 55%, blue: 15%, effect: none } } ]
                   - button:
                       x: 91
-                      y: 148
+                      y: 186
                       width: 84
-                      height: 44
-                      bg_color: 0xE5534B
-                      widgets: [ { label: { align: CENTER, text: "Red", text_color: 0x0F1720 } } ]
-                      on_click: [ { light.turn_on: { id: accent, red: 100%, green: 0%, blue: 0%, effect: none } } ]
+                      height: 40
+                      bg_color: 0x2DBFB0
+                      widgets: [ { label: { align: CENTER, text: "Teal", text_color: 0x0F1720 } } ]
+                      on_click: [ { light.turn_on: { id: accent, red: 0%, green: 75%, blue: 70%, effect: none } } ]
                   - button:
                       x: 182
-                      y: 148
+                      y: 186
                       width: 84
-                      height: 44
+                      height: 40
                       bg_color: 0x2F81F7
                       widgets: [ { label: { align: CENTER, text: "Blue", text_color: 0x0F1720 } } ]
                       on_click: [ { light.turn_on: { id: accent, red: 0%, green: 30%, blue: 100%, effect: none } } ]
                   - button:
                       x: 273
-                      y: 148
+                      y: 186
                       width: 84
-                      height: 44
+                      height: 40
                       bg_color: 0xA371F7
                       widgets: [ { label: { align: CENTER, text: "Purple", text_color: 0x0F1720 } } ]
                       on_click: [ { light.turn_on: { id: accent, red: 70%, green: 0%, blue: 100%, effect: none } } ]
                   - button:
                       x: 364
-                      y: 148
+                      y: 186
                       width: 86
-                      height: 44
+                      height: 40
                       widgets: [ { label: { align: CENTER, text: "Breathe" } } ]
                       on_click: [ { light.turn_on: { id: accent, effect: "Breathe" } } ]
-                  - label: { id: lbl_wifi, x: 0, y: 206, styles: dim, text: "Wi-Fi: --" }
-                  - label: { id: lbl_ip, x: 230, y: 206, styles: dim, text: "IP: --" }
+                  - label: { id: lbl_wifi, x: 0, y: 234, styles: dim, text: "Wi-Fi: --" }
+                  - label: { id: lbl_ip, x: 230, y: 234, styles: dim, text: "IP: --" }
