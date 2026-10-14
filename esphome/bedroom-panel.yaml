@@ -272,6 +272,22 @@ text_sensor:
           then:
             - globals.set: { id: dark_mode, value: !lambda 'return x == "below_horizon";' }
             - script.execute: apply_theme
+  # Thermostat activity: heating / cooling / idle / off - colours the cards.
+  - platform: homeassistant
+    id: hv_bed
+    entity_id: climate.bedroom
+    attribute: hvac_action
+    on_value: [ { script.execute: paint_colors } ]
+  - platform: homeassistant
+    id: hv_liv
+    entity_id: climate.living_room
+    attribute: hvac_action
+    on_value: [ { script.execute: paint_colors } ]
+  - platform: homeassistant
+    id: hv_up
+    entity_id: climate.upstairs
+    attribute: hvac_action
+    on_value: [ { script.execute: paint_colors } ]
   - platform: homeassistant
     id: weather_state
     entity_id: weather.forecast_home
@@ -382,9 +398,9 @@ online_image:
 script:
   - id: apply_theme
     then:
-      # On this panel the controller powers up inverted: invert_colors(false)
-      # = true colours (dark theme), invert_colors(true) = the white look.
-      - lambda: id(lcd).invert_colors(!id(dark_mode));
+      # Colours are painted directly for day/night; the display itself always
+      # runs in true colours (invert_colors(false) on this panel).
+      - lambda: id(lcd).invert_colors(false);
       - script.execute: paint_colors
       - script.execute: paint_dots
       - script.execute: { id: paint_door, door: 1 }
@@ -396,53 +412,127 @@ script:
       - lvgl.widget.update: { id: btn_dark, state: { checked: !lambda return id(dark_mode); } }
       - lvgl.widget.update: { id: btn_dark_auto, state: { checked: !lambda return id(dark_auto); } }
 
-  # Buttons look the same in both looks: blue with black text when off,
-  # lighter blue when on/pressed. Setup swatches keep their real colours.
-  # The white look is the panel inverted, so colours are pre-inverted there.
+  # Day / night palette, painted directly onto the widgets.
+  # Buttons: blue/black when off, light blue when on or pressed (both modes).
+  # Thermostat cards: dark blue idle/off, light blue cooling, light orange heating.
   - id: paint_colors
     then:
       - lambda: |-
           const bool dark = id(dark_mode);
-          auto real = [dark](uint32_t want) { return lv_color_hex(dark ? want : (want ^ 0xFFFFFF)); };
-          const lv_color_t off = real(0x2D66DD), on = real(0x8AB4F8), black = real(0x000000);
+          auto C = [](uint32_t c) { return lv_color_hex(c); };
+          const lv_color_t page   = C(dark ? 0x1C222B : 0xF3F5F8);
+          const lv_color_t bar    = C(dark ? 0x141920 : 0xFFFFFF);
+          const lv_color_t text   = C(dark ? 0xE6EDF3 : 0x1F2328);
+          const lv_color_t tabtxt = C(dark ? 0xD0D7DE : 0x4A5560);
+          const lv_color_t dimtxt = C(dark ? 0x9DA7B3 : 0x6E7781);
+          const lv_color_t card   = C(dark ? 0x2A3240 : 0xE3E8EF);
+          const lv_color_t off = C(0x2D66DD), on = C(0x8AB4F8), heat = C(0xFFB870), ink = C(0x0F1720);
+
           struct Swatch { lv_obj_t *btn; uint32_t col; };
           const Swatch swatches[] = { {id(btn_warm), 0xFFB347}, {id(btn_teal), 0x2DBFB0},
                                       {id(btn_blue), 0x2F81F7}, {id(btn_purple), 0xA371F7} };
-          auto paint_labels = [&](lv_obj_t *b) {
+          lv_obj_t *keep[] = { id(lbl_gd1), id(lbl_gd2), id(lbl_gd3), id(lbl_shop), id(lbl_mower), id(lbl_chicken) };
+          auto is_keep = [&](lv_obj_t *o) { for (auto k : keep) if (k == o) return true; return false; };
+
+          auto paint_button = [&](lv_obj_t *b) {
+            uint32_t sw = 0;
+            for (auto &w : swatches) if (w.btn == b) sw = w.col;
+            const lv_color_t base = sw ? C(sw) : off;
+            lv_obj_set_style_bg_color(b, base, LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_style_bg_color(b, sw ? base : on, LV_PART_MAIN | LV_STATE_CHECKED);
+            lv_obj_set_style_bg_color(b, sw ? base : on, LV_PART_MAIN | LV_STATE_PRESSED);
             for (uint32_t i = 0; i < lv_obj_get_child_count(b); i++) {
               lv_obj_t *c = lv_obj_get_child(b, i);
-              if (lv_obj_check_type(c, &lv_label_class) && c != id(lbl_gd1) && c != id(lbl_gd2) && c != id(lbl_gd3))
-                lv_obj_set_style_text_color(c, black, LV_PART_MAIN);
+              if (lv_obj_check_type(c, &lv_label_class) && !is_keep(c)) lv_obj_set_style_text_color(c, ink, 0);
             }
           };
+          auto paint_card = [&](lv_obj_t *cd, lv_color_t bg, lv_color_t fg) {
+            lv_obj_set_style_bg_color(cd, bg, 0);
+            lv_obj_set_style_bg_opa(cd, LV_OPA_COVER, 0);
+            for (uint32_t i = 0; i < lv_obj_get_child_count(cd); i++) {
+              lv_obj_t *c = lv_obj_get_child(cd, i);
+              if (lv_obj_check_type(c, &lv_label_class) && !is_keep(c)) lv_obj_set_style_text_color(c, fg, 0);
+            }
+          };
+
+          // Page background and tab bar
+          lv_obj_t *scr = lv_screen_active();
+          lv_obj_set_style_bg_color(scr, page, 0);
+          lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+          lv_obj_t *tv = id(tabs);
+          lv_obj_set_style_bg_color(tv, page, 0);
+          lv_obj_set_style_bg_opa(tv, LV_OPA_COVER, 0);
+          lv_obj_t *content = lv_tabview_get_content(tv);
+          lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
+          for (uint32_t i = 0; i < lv_obj_get_child_count(content); i++) {
+            lv_obj_t *pg = lv_obj_get_child(content, i);
+            lv_obj_set_style_bg_opa(pg, LV_OPA_TRANSP, 0);
+            // the page itself never scrolls/wobbles; swiping between tabs still works
+            lv_obj_remove_flag(pg, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_set_scrollbar_mode(pg, LV_SCROLLBAR_MODE_OFF);
+          }
+          lv_obj_t *tb = lv_tabview_get_tab_bar(tv);
+          lv_obj_set_style_bg_color(tb, bar, 0);
+          lv_obj_set_style_bg_opa(tb, LV_OPA_COVER, 0);
+          for (uint32_t i = 0; i < lv_obj_get_child_count(tb); i++) {
+            lv_obj_t *t = lv_obj_get_child(tb, i);
+            for (lv_state_t st : {LV_STATE_DEFAULT, LV_STATE_CHECKED, LV_STATE_PRESSED})
+              lv_obj_set_style_bg_opa(t, LV_OPA_TRANSP, LV_PART_MAIN | st);
+            lv_obj_set_style_text_color(t, tabtxt, LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_style_border_color(t, off, LV_PART_MAIN | LV_STATE_CHECKED);
+            for (uint32_t j = 0; j < lv_obj_get_child_count(t); j++) {
+              lv_obj_t *l = lv_obj_get_child(t, j);
+              if (lv_obj_check_type(l, &lv_label_class)) lv_obj_set_style_text_color(l, tabtxt, 0);
+            }
+          }
+
+          // Everything on the pages
           std::function<void(lv_obj_t *)> walk = [&](lv_obj_t *o) {
-            if (lv_obj_check_type(o, &lv_button_class)) {
-              uint32_t sw = 0;
-              for (auto &w : swatches) if (w.btn == o) sw = w.col;
-              const lv_color_t base = sw ? real(sw) : off;
-              lv_obj_set_style_bg_color(o, base, LV_PART_MAIN | LV_STATE_DEFAULT);
-              lv_obj_set_style_bg_color(o, sw ? base : on, LV_PART_MAIN | LV_STATE_CHECKED);
-              lv_obj_set_style_bg_color(o, sw ? base : on, LV_PART_MAIN | LV_STATE_PRESSED);
-              paint_labels(o);
+            for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+              lv_obj_t *c = lv_obj_get_child(o, i);
+              if (lv_obj_check_type(c, &lv_button_class)) {
+                paint_button(c);
+              } else if (lv_obj_check_type(c, &lv_label_class)) {
+                if (is_keep(c)) continue;
+                if (c == id(lbl_clock)) lv_obj_set_style_text_color(c, tabtxt, 0);
+                else if (c == id(lbl_date) || c == id(lbl_wifi) || c == id(lbl_ip)) lv_obj_set_style_text_color(c, dimtxt, 0);
+                else lv_obj_set_style_text_color(c, text, 0);
+              } else {
+                walk(c);
+              }
             }
-            for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) walk(lv_obj_get_child(o, i));
           };
-          walk(lv_screen_active());
-          walk(lv_layer_top());
+          walk(content);
+
+          // Cards
+          for (lv_obj_t *cd : {id(card_out), id(card_shop), id(card_mower), id(card_chick)})
+            paint_card(cd, card, text);
+          auto hv = [&](const std::string &a) { return a == "heating" ? heat : (a == "cooling" ? on : off); };
+          paint_card(id(card_bed), hv(id(hv_bed).state), ink);
+          paint_card(id(card_liv), hv(id(hv_liv).state), ink);
+          paint_card(id(card_up),  hv(id(hv_up).state),  ink);
+
+          // Pop-up buttons (confirm dialog)
+          std::function<void(lv_obj_t *)> walk_top = [&](lv_obj_t *o) {
+            for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+              lv_obj_t *c = lv_obj_get_child(o, i);
+              if (lv_obj_check_type(c, &lv_button_class)) paint_button(c); else walk_top(c);
+            }
+          };
+          walk_top(lv_layer_top());
 
   # Reset tab dots: green = online, red = offline (as Home Assistant sees it).
   - id: paint_dots
     mode: queued
     then:
       - lambda: |-
-          const bool dark = id(dark_mode);
           struct Dot { lv_obj_t *dot; std::string state; };
           const Dot dots[] = { {id(dot_bedled), id(av_bedled).state}, {id(dot_shopint), id(av_shopint).state},
                                {id(dot_shopext), id(av_shopext).state}, {id(dot_shopos), id(av_shopos).state},
                                {id(dot_chicken), id(av_chicken).state}, {id(dot_pool), id(av_pool).state} };
           for (auto &d : dots) {
             uint32_t c = d.state.empty() ? 0x8B949E : (d.state == "unavailable" ? 0xE5534B : 0x3FB950);
-            lv_obj_set_style_bg_color(d.dot, lv_color_hex(dark ? c : c ^ 0xFFFFFF), LV_PART_MAIN);
+            lv_obj_set_style_bg_color(d.dot, lv_color_hex(c), LV_PART_MAIN);
           }
 
   # Show camera 1 (Front Door) or 2 (Driveway); wakes the screen if needed.
@@ -452,8 +542,6 @@ script:
       cam: int
     then:
       - globals.set: { id: cam_selected, value: !lambda return cam; }
-      # Snapshots must show true colours even when the white look is active.
-      - lambda: id(lcd).invert_colors(false);
       - if:
           condition: lvgl.is_paused
           then:
@@ -537,8 +625,7 @@ script:
           uint32_t col = 0x8B949E;                       // grey: unknown/unavailable
           if (s == "closed") col = 0x3FB950;             // green
           else if (s == "open" || s == "opening" || s == "closing" || s == "stopped") col = 0xE5534B;  // red
-          // the white look is the display inverted, so pre-invert to keep true colours
-          lv_obj_set_style_text_color(lbl, lv_color_hex(id(dark_mode) ? col : col ^ 0xFFFFFF), 0);
+          lv_obj_set_style_text_color(lbl, lv_color_hex(col), 0);
 
   # Opens the confirm dialog for action N with the given question.
   - id: ask
@@ -744,9 +831,10 @@ lvgl:
               - name: "Home"
                 id: tab_home
                 widgets:
-                  - label: { id: lbl_clock, x: 6, y: 0, text_font: f_clock, text_color: 0xFFFFFF, text: "--:--" }
+                  - label: { id: lbl_clock, x: 6, y: 0, text_font: f_clock, text: "--:--" }
                   - label: { id: lbl_date, x: 10, y: 72, styles: dim, text_font: montserrat_18, text: "" }
                   - obj:
+                      id: card_out
                       styles: card
                       x: 270
                       y: 4
@@ -757,6 +845,7 @@ lvgl:
                         - label: { id: lbl_weather, align: BOTTOM_LEFT, styles: dim, text: "" }
                         - label: { align: TOP_RIGHT, styles: dim, text: "Outside" }
                   - obj:
+                      id: card_bed
                       styles: card
                       x: 0
                       y: 104
@@ -766,6 +855,7 @@ lvgl:
                         - label: { align: TOP_LEFT, styles: dim, text_font: montserrat_14, text: "Bedroom" }
                         - label: { id: lbl_t_bedroom, align: BOTTOM_RIGHT, text_font: f_temp, text: "--°" }
                   - obj:
+                      id: card_liv
                       styles: card
                       x: 152
                       y: 104
@@ -775,6 +865,7 @@ lvgl:
                         - label: { align: TOP_LEFT, styles: dim, text_font: montserrat_14, text: "Living" }
                         - label: { id: lbl_t_living, align: BOTTOM_RIGHT, text_font: f_temp, text: "--°" }
                   - obj:
+                      id: card_up
                       styles: card
                       x: 304
                       y: 104
@@ -882,6 +973,7 @@ lvgl:
                             question: !lambda 'return id(st_gd3).state == "closed" ? std::string("Open Garage Door 3?") : std::string("Close Garage Door 3?");'
                   # status only
                   - obj:
+                      id: card_shop
                       styles: card
                       x: 0
                       y: 134
@@ -891,6 +983,7 @@ lvgl:
                         - label: { align: TOP_MID, styles: dim, text: "Shop Door" }
                         - label: { id: lbl_shop, align: BOTTOM_MID, text: "--", text_font: montserrat_22 }
                   - obj:
+                      id: card_mower
                       styles: card
                       x: 152
                       y: 134
@@ -900,6 +993,7 @@ lvgl:
                         - label: { align: TOP_MID, styles: dim, text: "Mower Door" }
                         - label: { id: lbl_mower, align: BOTTOM_MID, text: "--", text_font: montserrat_22 }
                   - obj:
+                      id: card_chick
                       styles: card
                       x: 304
                       y: 134
