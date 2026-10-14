@@ -2,7 +2,58 @@
 # Never turned off by these scenes: bedroom fan, fridge light, Bathroom LED
 # (light.bathroom_led_tasmota), front door and back porch lights, and the
 # kitchen WLED strip (handled separately).
+# Camera snapshots for the panel. Eufy's saved event thumbnails can't be
+# decoded outside the Eufy app, and its photos are 100-300 KB - far too big
+# for the panel's RAM. So HA grabs a fresh live frame through the Eufy add-on,
+# shrinks it to ~10 KB, and the panel downloads that. Random folder name so
+# the file can't be guessed.
+shell_command:
+  panel_clear_snapshot: >-
+    rm -f /config/www/panel_CHANGE_ME_RANDOM/{{ name }}.jpg
+  panel_shrink_snapshot: >-
+    python3 /config/panel_snapshot.py /config/www/panel_CHANGE_ME_RANDOM {{ name }}
+
+automation:
+  - alias: "Panel - prepare camera snapshot on doorbell / driveway person"
+    id: panel_prepare_cam_snapshot
+    mode: parallel
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.front_doorbell_doorbell
+        to: "on"
+        id: door
+      - platform: state
+        entity_id: binary_sensor.driveway_person
+        to: "on"
+        id: drive
+    action:
+      - service: script.panel_cam_snapshot
+        data:
+          camera: "{{ 'camera.front_doorbell' if trigger.id == 'door' else 'camera.driveway' }}"
+          name: "{{ trigger.id }}"
+
 script:
+  panel_cam_snapshot:
+    alias: "Panel - camera snapshot"
+    mode: queued
+    fields:
+      camera:
+        example: camera.front_doorbell
+      name:
+        example: door
+    sequence:
+      - service: shell_command.panel_clear_snapshot
+        data:
+          name: "{{ name }}"
+      - service: eufy_event_gateway.capture_snapshot
+        target:
+          entity_id: "{{ camera }}"
+        data:
+          filename: "/config/www/panel_CHANGE_ME_RANDOM/{{ name }}_full.jpg"
+      - service: shell_command.panel_shrink_snapshot
+        data:
+          name: "{{ name }}"
+
   panel_all_off:
     alias: "All Off"
     icon: mdi:power

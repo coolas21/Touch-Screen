@@ -56,3 +56,19 @@ A red **No HA** badge shows in the top-right corner when the panel isn't connect
 This board has no PSRAM. The LVGL draw buffer is 12% so a 240x147 snapshot fits.
 HA shows **Free Memory** and **Largest Free Block** sensors for the panel. If snapshots
 fail with "Couldn't load picture", check those first.
+
+## Camera snapshots
+
+Eufy's saved event thumbnails can't be decoded outside the Eufy app, and its
+full photos are 100-300 KB, far too big for this board's RAM. So when the
+doorbell rings or the driveway camera sees a person (or a Cams button is
+pressed), Home Assistant runs `script.panel_cam_snapshot`:
+1. it deletes the previous small picture,
+2. captures a fresh live frame through the Eufy add-on (`eufy_event_gateway.capture_snapshot`),
+3. repairs and shrinks it with `home-assistant/panel_snapshot.py` (ffmpeg) to a ~4 KB
+   baseline JPEG of about 19,000 pixels,
+4. writes it to a random folder under `/config/www`. The panel polls for it every 2.5 s.
+
+Setup: copy `panel_snapshot.py` to `/config/`, create `/config/www/panel_<random>/`,
+put the same random name in `bedroom_panel.yaml` and in ESPHome `secrets.yaml`
+(`panel_cam_path`).

@@ -13,6 +13,8 @@
 
 substitutions:
   name: bedroom-panel
+  # private /local folder where HA writes the shrunk snapshots (in secrets.yaml)
+  cam_path: !secret panel_cam_path
   friendly_name: Bedroom Panel
 
 esphome:
@@ -192,6 +194,9 @@ globals:
   - id: cam_selected
     type: int
     initial_value: "1"
+  - id: cam_loaded
+    type: bool
+    initial_value: "false"
   # dark_mode true = true colours (dark navy theme); false = white look.
   - id: dark_mode
     type: bool
@@ -251,15 +256,6 @@ binary_sensor:
       - script.execute: { id: show_cam, cam: 2 }
 
 text_sensor:
-  # Snapshot links from HA, including HA's rotating access token.
-  - platform: homeassistant
-    id: pic_door
-    entity_id: camera.front_doorbell
-    attribute: entity_picture
-  - platform: homeassistant
-    id: pic_drive
-    entity_id: camera.driveway
-    attribute: entity_picture
   # Dark Mode follows the sun when "Auto at night" is on. Fires only on a
   # change, so a manual tap holds until the next sunrise/sunset.
   - platform: homeassistant
@@ -408,19 +404,19 @@ online_image:
     url: "http://192.168.1.115:8123/"
     format: JPEG
     type: RGB565
-    resize: 240x147
-    buffer_size: 65536
+    # HA serves ~4 KB baseline JPEGs sized to ~19k pixels (~37 KB decoded)
+    buffer_size: 16384
     update_interval: never
     on_download_finished:
       - logger.log: { level: WARN, tag: cam, format: "snapshot loaded OK" }
+      - globals.set: { id: cam_loaded, value: "true" }
       - lvgl.image.update: { id: img_cam, src: cam_img }
       - lvgl.widget.hide: lbl_cam_status
     on_error:
+      # usually just "not ready yet" (HA deletes the old picture first) - show_cam retries
       - lambda: |-
-          ESP_LOGE("cam", "snapshot FAILED | free heap %u, largest block %u",
+          ESP_LOGW("cam", "snapshot not ready / failed | free heap %u, largest block %u",
                    (unsigned) id(heap_free).state, (unsigned) id(heap_block).state);
-      - lvgl.label.update: { id: lbl_cam_status, text: "Couldn't load picture" }
-      - lvgl.widget.show: lbl_cam_status
 
 # ------------------------------------------------------------------ scripts
 script:
@@ -594,24 +590,49 @@ script:
       - lvgl.widget.show: lbl_cam_status
       - lvgl.widget.hide: wake_shield
       - lvgl.widget.show: dlg_cam
-      - script.execute: fetch_cam
-      - delay: 5s
-      - script.execute: fetch_cam
-      - delay: 40s
+      - globals.set: { id: cam_loaded, value: "false" }
+      # HA is grabbing a fresh frame and shrinking it (about 2-7 s); poll for it.
+      - delay: 2500ms
+      - repeat:
+          count: 8
+          then:
+            - if:
+                condition:
+                  lambda: return !id(cam_loaded);
+                then:
+                  - script.execute: fetch_cam
+                  - delay: 2500ms
+      - if:
+          condition:
+            lambda: return !id(cam_loaded);
+          then:
+            - lvgl.label.update: { id: lbl_cam_status, text: "Couldn't load picture" }
+      - delay: 25s
       - script.execute: close_cam
+
+  # Cams tab buttons: ask HA for a fresh snapshot, then open the pop-up.
+  - id: request_cam
+    parameters:
+      cam: int
+    then:
+      - homeassistant.action:
+          action: script.panel_cam_snapshot
+          data:
+            camera: !lambda 'return cam == 1 ? std::string("camera.front_doorbell") : std::string("camera.driveway");'
+            name: !lambda 'return cam == 1 ? std::string("door") : std::string("drive");'
+      - script.execute: { id: show_cam, cam: !lambda return cam; }
 
   - id: fetch_cam
     then:
       - lambda: |-
-          std::string p = id(cam_selected) == 1 ? id(pic_door).state : id(pic_drive).state;
-          std::string shown = p.substr(0, p.find("token=")) + "token=...";
-          ESP_LOGW("cam", "fetching %s | free heap %u, largest block %u",
-                   shown.c_str(), (unsigned) id(heap_free).state, (unsigned) id(heap_block).state);
+          ESP_LOGW("cam", "fetching %s.jpg | free heap %u, largest block %u",
+                   id(cam_selected) == 1 ? "door" : "drive",
+                   (unsigned) id(heap_free).state, (unsigned) id(heap_block).state);
       - online_image.set_url:
           id: cam_img
           url: !lambda |-
-            std::string p = id(cam_selected) == 1 ? id(pic_door).state : id(pic_drive).state;
-            return std::string("http://192.168.1.115:8123") + p;
+            return std::string("http://192.168.1.115:8123${cam_path}/") +
+                   (id(cam_selected) == 1 ? "door.jpg" : "drive.jpg");
       - component.update: cam_img
 
   - id: close_cam
@@ -1077,14 +1098,14 @@ lvgl:
                       width: 450
                       height: 110
                       widgets: [ { label: { align: CENTER, text: "Front Door", text_font: montserrat_26 } } ]
-                      on_click: [ { script.execute: { id: show_cam, cam: 1 } } ]
+                      on_click: [ { script.execute: { id: request_cam, cam: 1 } } ]
                   - button:
                       x: 0
                       y: 128
                       width: 450
                       height: 110
                       widgets: [ { label: { align: CENTER, text: "Driveway", text_font: montserrat_26 } } ]
-                      on_click: [ { script.execute: { id: show_cam, cam: 2 } } ]
+                      on_click: [ { script.execute: { id: request_cam, cam: 2 } } ]
 
               # ---------------------------------------------------- RESET
               - name: "Reset"
