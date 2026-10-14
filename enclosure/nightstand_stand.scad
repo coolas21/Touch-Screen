@@ -31,14 +31,14 @@ active_y  = (board_h - active_h) / 2; // board bottom edge -> bottom edge of lit
 window_margin = 0.8; // extra opening around the lit area on each side
 
 /* [USB port] */
-usb_side  = "both";    // [left, right, both] which short edge(s) get a notch
+usb_side  = "right";   // [left, right, both] short edge with the USB-C port (front view)
 usb_y     = board_h/2; // port centre, from the board's bottom edge
 usb_open_w = 13;       // notch width, sized for a USB-C plug's overmold
 usb_open_h = 8;        // notch height below the board (rest is open to the bezel)
 usb_center_below_pcb = 1.6; // port centreline below the back face of the PCB
 
 /* [RGB LED window] */
-led_x     = board_w/2; // window centre from board left edge (front view)
+led_x     = board_w/2; // window centre from board left edge (front view); LED is dead centre
 led_y     = board_h/2; // window centre from board bottom edge
 led_win_w = 34;        // window size; big on purpose so it clears the LED
 led_win_h = 20;        // even if the position above is a few mm off

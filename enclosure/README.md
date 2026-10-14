@@ -25,7 +25,8 @@ Stick your rubber pads anywhere on the flat bottom of the base.
 
 The outline and screen sizes come from LCDwiki, but I couldn't get their drawing for
 where the port, LED and lit area sit, so those are parameters with safe guesses.
-Measure with calipers, set them at the top of `nightstand_stand.scad`, and re-export the STLs
+The USB-C port is on the right and the LED is dead centre on the back, and the model is set up for that.
+Measure the rest with calipers, set them at the top of `nightstand_stand.scad`, and re-export the STLs
 (OpenSCAD: set `part`, F6, File → Export → STL).
 
 Measure everything **looking at the screen**, from the board's **bottom-left corner**, screen in landscape.
@@ -33,8 +34,7 @@ Measure everything **looking at the screen**, from the board's **bottom-left cor
 | Parameter | What to measure | Default |
 |---|---|---|
 | `active_x`, `active_y` | Board edge to the edge of the **lit** area (turn the screen on, show a white page). | Centred |
-| `usb_side`, `usb_y` | Which short end the USB-C port is on, and the height of its centre from the bottom edge. | Notch on both ends, centred |
-| `led_x`, `led_y` | Centre of the RGB LED on the back (measured from the front-view left edge: `board_w - x` if you measure from the back). | Centred, 34 × 20 mm window |
+| `usb_y` | Height of the USB-C port's centre from the bottom edge (`usb_side` is set to `right`). | Centred |
 | `rear_clear` | Height of the tallest part on the back of the PCB (usually the USB-C port or a JST plug). | 9 mm |
 
 The holder and stand are only sized from the board outline, so if you just want to test the fit
