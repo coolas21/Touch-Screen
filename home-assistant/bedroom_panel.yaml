@@ -68,36 +68,50 @@ script:
   panel_movie:
     alias: "Movie"
     icon: mdi:movie-open
-    mode: single
+    mode: restart
     sequence:
-      # Living room fades down over ~0.7s, then off.
-      - service: light.turn_on
-        target:
-          entity_id: &living_room
-            - light.livingroom_dimmer_tasmota
-            - light.livingroom_dimmer_2_tasmota
-        data:
-          brightness_pct: 50
-      - delay: { milliseconds: 250 }
-      - service: light.turn_on
-        target:
-          entity_id: *living_room
-        data:
-          brightness_pct: 20
-      - delay: { milliseconds: 250 }
-      - service: light.turn_on
-        target:
-          entity_id: *living_room
-        data:
-          brightness_pct: 5
-      - delay: { milliseconds: 200 }
+      # Dining room goes off at the same moment the living room starts its
+      # fade; kitchen and foyer are left alone.
+      - parallel:
+          - sequence:
+              - service: light.turn_off
+                target:
+                  entity_id: light.diningroom_switch_tasmota
+              - service: switch.turn_off
+                target:
+                  entity_id: switch.dinning_acc_tasmota
+          - service: script.panel_fade_off
+            data:
+              entity: light.livingroom_dimmer_tasmota
+          - service: script.panel_fade_off
+            data:
+              entity: light.livingroom_dimmer_2_tasmota
+
+  # Fades a dimmer from its current brightness down to 1% over 1.5 s
+  # (6 steps x 250 ms), then turns it off. Does nothing if it's already off.
+  panel_fade_off:
+    alias: "Panel - fade a dimmer off"
+    mode: parallel
+    fields:
+      entity:
+        description: Light to fade off
+        example: light.livingroom_dimmer_tasmota
+    sequence:
+      - condition: template
+        value_template: "{{ is_state(entity, 'on') }}"
+      - variables:
+          steps: 6
+          start: "{{ ((state_attr(entity, 'brightness') or 255) / 255 * 100) | round(0) | int }}"
+      - repeat:
+          count: "{{ steps }}"
+          sequence:
+            - service: light.turn_on
+              target:
+                entity_id: "{{ entity }}"
+              data:
+                brightness_pct: "{{ [ (start - (start - 1) * repeat.index / steps) | round(0) | int, 1 ] | max }}"
+            - delay:
+                milliseconds: 250
       - service: light.turn_off
         target:
-          entity_id: *living_room
-      # Dining room off; kitchen and foyer are left alone.
-      - service: light.turn_off
-        target:
-          entity_id: light.diningroom_switch_tasmota
-      - service: switch.turn_off
-        target:
-          entity_id: switch.dinning_acc_tasmota
+          entity_id: "{{ entity }}"
