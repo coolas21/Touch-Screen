@@ -533,9 +533,14 @@ script:
 
 # --------------------------------------------------------------------- UI
 font:
-  - file: "gfonts://Roboto"
+  # Bold + anti-aliased (bpp 4) so the clock stays crisp on the white look too.
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 700
     id: f_clock
     size: 64
+    bpp: 4
     glyphs: "0123456789:- "
   - file: "gfonts://Roboto"
     id: f_temp
@@ -679,8 +684,8 @@ lvgl:
               - name: "Home"
                 id: tab_home
                 widgets:
-                  - label: { id: lbl_clock, x: 6, y: 0, text_font: f_clock, text: "--:--" }
-                  - label: { id: lbl_date, x: 10, y: 72, styles: dim, text_font: montserrat_18, text: "" }
+                  - label: { id: lbl_clock, x: 6, y: 0, text_font: f_clock, text_color: 0xFFFFFF, text: "--:--" }
+                  - label: { id: lbl_date, x: 10, y: 72, text_color: 0xE6EDF3, text_font: montserrat_18, text: "" }
                   - obj:
                       styles: card
                       x: 270
