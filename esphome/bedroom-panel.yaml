@@ -522,6 +522,10 @@ script:
                 else if (c == id(lbl_date) || c == id(lbl_wifi) || c == id(lbl_ip)) lv_obj_set_style_text_color(c, dimtxt, 0);
                 else lv_obj_set_style_text_color(c, text, 0);
               } else {
+                // plain containers (e.g. the Reset tab grid) show the page colour;
+                // cards get their own colour further down
+                lv_obj_set_style_bg_opa(c, LV_OPA_TRANSP, 0);
+                lv_obj_set_style_border_width(c, 0, 0);
                 walk(c);
               }
             }
