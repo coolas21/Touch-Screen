@@ -65,7 +65,10 @@ open(fixed, "wb").write(bytes(res))
 subprocess.run(
     ["ffmpeg", "-y", "-loglevel", "error", "-i", fixed,
      "-vf", "scale=trunc(sqrt(19000*iw/ih)/2)*2:-2,"
-            "colorchannelmixer=rr=0:rb=1:bb=0:br=1",
+            "colorchannelmixer=rr=0:rb=1:bb=0:br=1,"
+            # back to 4:2:0 - the mixer makes ffmpeg write 4:4:4, which the
+            # panel's JPEG decoder rejects ("Error while decoding: 2")
+            "format=yuvj420p",
      "-q:v", "6", tmp],
     check=True,
 )
