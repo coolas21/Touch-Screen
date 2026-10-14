@@ -80,12 +80,11 @@ script:
               - service: switch.turn_off
                 target:
                   entity_id: switch.dinning_acc_tasmota
+          # Only Dimmer 1: Dimmer 2 is in the same device group ("livin") and
+          # follows it, so fading both would make them fight each other.
           - service: script.panel_fade_off
             data:
               entity: light.livingroom_dimmer_tasmota
-          - service: script.panel_fade_off
-            data:
-              entity: light.livingroom_dimmer_2_tasmota
 
   # Fades a dimmer from its current brightness down to 1% over 1.5 s
   # (6 steps x 250 ms), then turns it off. Does nothing if it's already off.
