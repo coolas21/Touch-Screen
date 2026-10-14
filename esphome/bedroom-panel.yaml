@@ -37,9 +37,9 @@ api:
   encryption:
     key: !secret bedroom_panel_api_key
   on_client_connected:
-    - output.turn_off: led_red
+    - lvgl.widget.hide: badge_no_ha
   on_client_disconnected:
-    - output.turn_on: led_red
+    - lvgl.widget.show: badge_no_ha
 
 ota:
   - platform: esphome
@@ -78,16 +78,19 @@ output:
   - platform: ledc
     id: backlight_pwm
     pin: GPIO27
-  # On-board RGB LED is common-anode (on = LOW). Red = no HA connection.
-  - platform: gpio
+  # On-board RGB LED, common-anode (on = LOW), used as an accent glow.
+  - platform: ledc
     id: led_red
-    pin: { number: GPIO22, inverted: true }
-  - platform: gpio
+    pin: GPIO22
+    inverted: true
+  - platform: ledc
     id: led_green
-    pin: { number: GPIO16, inverted: true }
-  - platform: gpio
+    pin: GPIO16
+    inverted: true
+  - platform: ledc
     id: led_blue
-    pin: { number: GPIO17, inverted: true }
+    pin: GPIO17
+    inverted: true
 
 light:
   - platform: monochromatic
@@ -96,6 +99,27 @@ light:
     output: backlight_pwm
     restore_mode: ALWAYS_ON
     default_transition_length: 300ms
+  - platform: rgb
+    id: accent
+    name: "Accent Light"
+    red: led_red
+    green: led_green
+    blue: led_blue
+    restore_mode: RESTORE_DEFAULT_OFF
+    default_transition_length: 500ms
+    effects:
+      - pulse:
+          name: "Breathe"
+          transition_length: 2s
+          update_interval: 2s
+    on_state:
+      - lvgl.widget.update:
+          id: btn_accent
+          state:
+            checked: !lambda return id(accent).current_values.is_on();
+      - lvgl.slider.update:
+          id: sld_accent
+          value: !lambda return id(accent).current_values.get_brightness() * 100.0;
 
 display:
   - platform: ili9xxx
@@ -417,6 +441,17 @@ lvgl:
 
   top_layer:
     widgets:
+      - label:
+          id: badge_no_ha
+          align: TOP_RIGHT
+          x: -6
+          y: 4
+          text: "No HA"
+          text_color: 0xFFFFFF
+          bg_color: 0xE5534B
+          bg_opa: COVER
+          radius: 6
+          pad_all: 4
       - obj:
           id: dlg_confirm
           hidden: true
@@ -712,20 +747,77 @@ lvgl:
               # ---------------------------------------------------- SETUP
               - name: "Setup"
                 widgets:
-                  - label: { x: 0, y: 4, text: "Screen brightness", text_font: montserrat_18 }
+                  - label: { x: 0, y: 0, text: "Screen brightness", text_font: montserrat_18 }
                   - slider:
                       id: sld_brightness
                       x: 10
-                      y: 40
+                      y: 30
                       width: 430
-                      height: 26
+                      height: 22
                       min_value: 10
                       max_value: 100
                       value: 100
                       on_release:
                         - globals.set: { id: screen_brightness, value: !lambda return int(x); }
                         - light.turn_on: { id: backlight, brightness: !lambda return x / 100.0; }
-                  - label: { id: lbl_wifi, x: 0, y: 96, styles: dim, text: "Wi-Fi: --" }
-                  - label: { id: lbl_ip, x: 0, y: 124, styles: dim, text: "IP: --" }
-                  - label: { x: 0, y: 152, styles: dim, text: "Dims after 1 min, off after 5 min. Touch to wake." }
-                  - label: { x: 0, y: 180, styles: dim, text: "LED red = not connected to Home Assistant." }
+                  - label: { x: 0, y: 70, text: "Accent light", text_font: montserrat_18 }
+                  - button:
+                      id: btn_accent
+                      x: 330
+                      y: 62
+                      width: 120
+                      height: 38
+                      widgets: [ { label: { align: CENTER, text: "On / Off" } } ]
+                      on_click: [ { light.toggle: accent } ]
+                  - slider:
+                      id: sld_accent
+                      x: 10
+                      y: 112
+                      width: 430
+                      height: 22
+                      min_value: 5
+                      max_value: 100
+                      value: 50
+                      on_release:
+                        - light.turn_on: { id: accent, brightness: !lambda return x / 100.0; }
+                  - button:
+                      x: 0
+                      y: 148
+                      width: 84
+                      height: 44
+                      bg_color: 0xFFB347
+                      widgets: [ { label: { align: CENTER, text: "Warm", text_color: 0x0F1720 } } ]
+                      on_click: [ { light.turn_on: { id: accent, red: 100%, green: 55%, blue: 15%, effect: none } } ]
+                  - button:
+                      x: 91
+                      y: 148
+                      width: 84
+                      height: 44
+                      bg_color: 0xE5534B
+                      widgets: [ { label: { align: CENTER, text: "Red", text_color: 0x0F1720 } } ]
+                      on_click: [ { light.turn_on: { id: accent, red: 100%, green: 0%, blue: 0%, effect: none } } ]
+                  - button:
+                      x: 182
+                      y: 148
+                      width: 84
+                      height: 44
+                      bg_color: 0x2F81F7
+                      widgets: [ { label: { align: CENTER, text: "Blue", text_color: 0x0F1720 } } ]
+                      on_click: [ { light.turn_on: { id: accent, red: 0%, green: 30%, blue: 100%, effect: none } } ]
+                  - button:
+                      x: 273
+                      y: 148
+                      width: 84
+                      height: 44
+                      bg_color: 0xA371F7
+                      widgets: [ { label: { align: CENTER, text: "Purple", text_color: 0x0F1720 } } ]
+                      on_click: [ { light.turn_on: { id: accent, red: 70%, green: 0%, blue: 100%, effect: none } } ]
+                  - button:
+                      x: 364
+                      y: 148
+                      width: 86
+                      height: 44
+                      widgets: [ { label: { align: CENTER, text: "Breathe" } } ]
+                      on_click: [ { light.turn_on: { id: accent, effect: "Breathe" } } ]
+                  - label: { id: lbl_wifi, x: 0, y: 206, styles: dim, text: "Wi-Fi: --" }
+                  - label: { id: lbl_ip, x: 230, y: 206, styles: dim, text: "IP: --" }

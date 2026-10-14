@@ -15,7 +15,7 @@ Hardware reference: <https://www.lcdwiki.com/4.0inch_ESP32-32E_Display>
 | **Setup** | Screen brightness slider, Wi-Fi signal, IP address. |
 
 The screen dims after 1 minute and turns off after 5 minutes. A touch wakes it, and the wake-up touch never presses a button.
-The board's RGB LED turns **red** when the panel isn't connected to Home Assistant.
+A red **No HA** badge shows in the top-right corner when the panel isn't connected to Home Assistant. The board's RGB LED is an **accent light** (Setup tab or the "Accent Light" entity in HA).
 
 ## Files
 
