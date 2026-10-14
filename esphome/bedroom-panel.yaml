@@ -412,9 +412,14 @@ online_image:
     buffer_size: 65536
     update_interval: never
     on_download_finished:
+      - logger.log: { level: WARN, tag: cam, format: "snapshot loaded OK" }
       - lvgl.image.update: { id: img_cam, src: cam_img }
       - lvgl.widget.hide: lbl_cam_status
     on_error:
+      - lambda: |-
+          ESP_LOGE("cam", "snapshot FAILED | free heap %u, largest block %u",
+                   (unsigned) heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                   (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
       - lvgl.label.update: { id: lbl_cam_status, text: "Couldn't load picture" }
       - lvgl.widget.show: lbl_cam_status
 
@@ -594,6 +599,12 @@ script:
 
   - id: fetch_cam
     then:
+      - lambda: |-
+          std::string p = id(cam_selected) == 1 ? id(pic_door).state : id(pic_drive).state;
+          std::string shown = p.substr(0, p.find("token=")) + "token=...";
+          ESP_LOGW("cam", "fetching %s | free heap %u, largest block %u",
+                   shown.c_str(), (unsigned) heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                   (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
       - online_image.set_url:
           id: cam_img
           url: !lambda |-
