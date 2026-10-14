@@ -537,8 +537,9 @@ script:
           walk(content);
 
           // Cards
-          for (lv_obj_t *cd : {id(card_out), id(card_shop), id(card_mower), id(card_chick)})
-            paint_card(cd, card, text);
+          // Outside weather has no on/off state, so it stays a neutral card; the door
+          // status tiles are coloured by paint_door.
+          paint_card(id(card_out), card, text);
           auto hv = [&](const std::string &a) { return a == "heating" ? heat : (a == "cooling" ? on : off); };
           paint_card(id(card_bed), hv(id(hv_bed).state), ink);
           paint_card(id(card_liv), hv(id(hv_liv).state), ink);
@@ -552,6 +553,9 @@ script:
             }
           };
           walk_top(lv_layer_top());
+
+          // door buttons/tiles carry state colours - repaint them after the sweep
+          for (int d = 1; d <= 6; d++) id(paint_door).execute(d);
 
   # Reset tab dots: green = online, red = offline (as Home Assistant sees it).
   - id: paint_dots
@@ -647,22 +651,34 @@ script:
       door: int
     then:
       - lambda: |-
-          std::string s; lv_obj_t *lbl = nullptr;
+          // Same scheme as the bedroom buttons: dark blue = closed, light blue = open/moving.
+          std::string s; lv_obj_t *lbl = nullptr; lv_obj_t *box = nullptr; bool is_btn = false;
           switch (door) {
-            case 1: s = id(st_gd1).state; lbl = id(lbl_gd1); break;
-            case 2: s = id(st_gd2).state; lbl = id(lbl_gd2); break;
-            case 3: s = id(st_gd3).state; lbl = id(lbl_gd3); break;
-            case 4: s = id(st_shop).state; lbl = id(lbl_shop); break;
-            case 5: s = id(st_mower).state; lbl = id(lbl_mower); break;
-            case 6: s = id(st_chicken).state; lbl = id(lbl_chicken); break;
+            case 1: s = id(st_gd1).state; lbl = id(lbl_gd1); is_btn = true; break;
+            case 2: s = id(st_gd2).state; lbl = id(lbl_gd2); is_btn = true; break;
+            case 3: s = id(st_gd3).state; lbl = id(lbl_gd3); is_btn = true; break;
+            case 4: s = id(st_shop).state; lbl = id(lbl_shop); box = id(card_shop); break;
+            case 5: s = id(st_mower).state; lbl = id(lbl_mower); box = id(card_mower); break;
+            case 6: s = id(st_chicken).state; lbl = id(lbl_chicken); box = id(card_chick); break;
           }
           if (!lbl) return;
-          std::string t = s; if (!t.empty()) t[0] = toupper(t[0]);
+          if (is_btn) box = lv_obj_get_parent(lbl);
+          std::string t = s.empty() ? std::string("--") : s;
+          t[0] = toupper(t[0]);
           lv_label_set_text(lbl, t.c_str());
-          uint32_t col = 0x8B949E;                       // grey: unknown/unavailable
-          if (s == "closed") col = 0x3FB950;             // green
-          else if (s == "open" || s == "opening" || s == "closing" || s == "stopped") col = 0xE5534B;  // red
-          lv_obj_set_style_text_color(lbl, lv_color_hex(col), 0);
+          const bool open = (s == "open" || s == "opening" || s == "closing" || s == "stopped");
+          const lv_color_t ink = lv_color_hex(0x0F1720);
+          if (is_btn) {
+            lv_obj_set_state(box, LV_STATE_CHECKED, open);
+            lv_obj_set_style_text_color(lbl, ink, 0);
+          } else {
+            lv_obj_set_style_bg_color(box, lv_color_hex(open ? 0x8AB4F8 : 0x2D66DD), 0);
+            lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+            for (uint32_t i = 0; i < lv_obj_get_child_count(box); i++) {
+              lv_obj_t *c = lv_obj_get_child(box, i);
+              if (lv_obj_check_type(c, &lv_label_class)) lv_obj_set_style_text_color(c, ink, 0);
+            }
+          }
 
   # Opens the confirm dialog for action N with the given question.
   - id: ask
