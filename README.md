@@ -11,8 +11,9 @@ Hardware reference: <https://www.lcdwiki.com/4.0inch_ESP32-32E_Display>
 | **Home** | Clock and date, outside temperature and weather, Bedroom / Living / Upstairs temperatures, and buttons for the bedroom Lamps, Bed LED and Fan (lit when on). |
 | **Scenes** | Good Night, Movie, All Off (Home Assistant scripts in `home-assistant/bedroom_panel.yaml`). |
 | **Doors** | Garage 1/2/3: tap to open or close, with a confirmation step. Shop, Mower and Chicken doors show status only. Green = closed, red = open. |
+| **Cams** | Front Door and Driveway snapshot buttons. The snapshot also **pops up automatically** when the doorbell rings or a person is detected on the driveway: the screen wakes, shows the picture (fetched again after 5 s), and closes after 45 s or on tap. |
 | **Reset** | Restarts flaky Tasmota devices (BedLED, Shop Lights Int/Ext, ShopOS, Chicken Door, Pool). Sends `Restart 1` **directly to the device over HTTP**, so it works even if Home Assistant or MQTT is down. The dot shows online (green) or offline (red) as Home Assistant sees it. Every restart asks for confirmation. |
-| **Setup** | Screen brightness slider, Wi-Fi signal, IP address. |
+| **Setup** | Screen brightness, accent light (on/off, brightness, Warm/Red/Blue/Purple, Breathe), Wi-Fi signal, IP address. |
 
 The screen dims after 1 minute and turns off after 5 minutes. A touch wakes it, and the wake-up touch never presses a button.
 A red **No HA** badge shows in the top-right corner when the panel isn't connected to Home Assistant. The board's RGB LED is an **accent light** (Setup tab or the "Accent Light" entity in HA).
@@ -49,3 +50,9 @@ A red **No HA** badge shows in the top-right corner when the panel isn't connect
 
 - **Scene contents:** edit the scripts in `home-assistant/bedroom_panel.yaml` (no reflash needed).
 - **Reset list:** each device is an `rst_*` script (IP address) plus a button and dot on the Reset tab.
+
+## Memory note
+
+This board has no PSRAM. The LVGL draw buffer is 12% so a 240x147 snapshot fits.
+HA shows **Free Memory** and **Largest Free Block** sensors for the panel. If snapshots
+fail with "Couldn't load picture", check those first.

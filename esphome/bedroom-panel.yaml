@@ -185,6 +185,12 @@ globals:
     type: int
     restore_value: true
     initial_value: "100"
+  - id: cam_woke_screen
+    type: bool
+    initial_value: "false"
+  - id: cam_selected
+    type: int
+    initial_value: "1"
 
 # ------------------------------------------------------- Home Assistant data
 sensor:
@@ -209,13 +215,41 @@ sensor:
     attribute: temperature
     on_value:
       - lvgl.label.update: { id: lbl_t_outside, text: { format: "%.0f°", args: [x] } }
+  - platform: debug
+    free:
+      id: heap_free
+      name: "Free Memory"
+    block:
+      id: heap_block
+      name: "Largest Free Block"
   - platform: wifi_signal
     id: wifi_rssi
     update_interval: 60s
     on_value:
       - lvgl.label.update: { id: lbl_wifi, text: { format: "Wi-Fi: %.0f dBm", args: [x] } }
 
+binary_sensor:
+  - platform: homeassistant
+    id: doorbell_ring
+    entity_id: binary_sensor.front_doorbell_doorbell
+    on_press:
+      - script.execute: { id: show_cam, cam: 1 }
+  - platform: homeassistant
+    id: driveway_person
+    entity_id: binary_sensor.driveway_person
+    on_press:
+      - script.execute: { id: show_cam, cam: 2 }
+
 text_sensor:
+  # Snapshot links from HA, including HA's rotating access token.
+  - platform: homeassistant
+    id: pic_door
+    entity_id: camera.front_doorbell
+    attribute: entity_picture
+  - platform: homeassistant
+    id: pic_drive
+    entity_id: camera.driveway
+    attribute: entity_picture
   - platform: homeassistant
     id: weather_state
     entity_id: weather.forecast_home
@@ -302,8 +336,77 @@ text_sensor:
     entity_id: light.pool_lights
     on_value: [ { lvgl.widget.update: { id: dot_pool, bg_color: !lambda 'return x == "unavailable" ? lv_color_hex(0xE5534B) : lv_color_hex(0x3FB950);' } } ]
 
+debug:
+  update_interval: 30s
+
+# Camera snapshots: Eufy thumbnails are 288x176 baseline JPEG (~50 KB);
+# decoded smaller to fit in RAM (no PSRAM).
+online_image:
+  - id: cam_img
+    url: "http://192.168.1.115:8123/"
+    format: JPEG
+    type: RGB565
+    resize: 240x147
+    buffer_size: 65536
+    update_interval: never
+    on_download_finished:
+      - lvgl.image.update: { id: img_cam, src: cam_img }
+      - lvgl.widget.hide: lbl_cam_status
+    on_error:
+      - lvgl.label.update: { id: lbl_cam_status, text: "Couldn't load picture" }
+      - lvgl.widget.show: lbl_cam_status
+
 # ------------------------------------------------------------------ scripts
 script:
+  # Show camera 1 (Front Door) or 2 (Driveway); wakes the screen if needed.
+  - id: show_cam
+    mode: restart
+    parameters:
+      cam: int
+    then:
+      - globals.set: { id: cam_selected, value: !lambda return cam; }
+      - if:
+          condition: lvgl.is_paused
+          then:
+            - globals.set: { id: cam_woke_screen, value: "true" }
+            - lvgl.resume:
+            - lvgl.widget.redraw:
+      - light.turn_on:
+          id: backlight
+          brightness: !lambda return id(screen_brightness) / 100.0;
+      - lvgl.label.update:
+          id: lbl_cam_title
+          text: !lambda 'return id(cam_selected) == 1 ? std::string("Front Door") : std::string("Driveway");'
+      - lvgl.label.update: { id: lbl_cam_status, text: "Loading..." }
+      - lvgl.widget.show: lbl_cam_status
+      - lvgl.widget.show: dlg_cam
+      - script.execute: fetch_cam
+      - delay: 5s
+      - script.execute: fetch_cam
+      - delay: 40s
+      - script.execute: close_cam
+
+  - id: fetch_cam
+    then:
+      - online_image.set_url:
+          id: cam_img
+          url: !lambda |-
+            std::string p = id(cam_selected) == 1 ? id(pic_door).state : id(pic_drive).state;
+            return std::string("http://192.168.1.115:8123") + p;
+      - component.update: cam_img
+
+  - id: close_cam
+    then:
+      - script.stop: show_cam
+      - lvgl.widget.hide: dlg_cam
+      - if:
+          condition:
+            lambda: return id(cam_woke_screen);
+          then:
+            - globals.set: { id: cam_woke_screen, value: "false" }
+            - light.turn_off: backlight
+            - lvgl.pause:
+
   - id: update_clock
     then:
       - lvgl.label.update:
@@ -405,7 +508,7 @@ font:
 lvgl:
   displays: [lcd]
   touchscreens: [touch]
-  buffer_size: 25%          # no PSRAM - draw the screen in slices (ESPHome's recommended value)
+  buffer_size: 12%          # no PSRAM - small draw buffer leaves RAM for camera snapshots
   default_font: montserrat_16
   theme:
     obj:
@@ -441,6 +544,21 @@ lvgl:
 
   top_layer:
     widgets:
+      - obj:
+          id: dlg_cam
+          hidden: true
+          width: 100%
+          height: 100%
+          bg_color: 0x000000
+          bg_opa: COVER
+          on_click:
+            - globals.set: { id: cam_woke_screen, value: "false" }
+            - script.execute: close_cam
+          widgets:
+            - label: { id: lbl_cam_title, align: TOP_MID, y: 6, text: "Front Door", text_font: montserrat_26 }
+            - image: { id: img_cam, align: CENTER, y: 6, src: cam_img }
+            - label: { id: lbl_cam_status, align: CENTER, text: "Loading...", text_font: montserrat_20 }
+            - label: { align: BOTTOM_MID, y: -6, styles: dim, text: "Tap to close" }
       - label:
           id: badge_no_ha
           align: TOP_RIGHT
@@ -674,6 +792,24 @@ lvgl:
                       widgets:
                         - label: { align: TOP_MID, styles: dim, text: "Chicken Door" }
                         - label: { id: lbl_chicken, align: BOTTOM_MID, text: "--", text_font: montserrat_22 }
+
+              # ----------------------------------------------------- CAMS
+              - name: "Cams"
+                widgets:
+                  - button:
+                      x: 0
+                      y: 6
+                      width: 450
+                      height: 110
+                      widgets: [ { label: { align: CENTER, text: "Front Door", text_font: montserrat_26 } } ]
+                      on_click: [ { script.execute: { id: show_cam, cam: 1 } } ]
+                  - button:
+                      x: 0
+                      y: 128
+                      width: 450
+                      height: 110
+                      widgets: [ { label: { align: CENTER, text: "Driveway", text_font: montserrat_26 } } ]
+                      on_click: [ { script.execute: { id: show_cam, cam: 2 } } ]
 
               # ---------------------------------------------------- RESET
               - name: "Reset"
