@@ -337,27 +337,27 @@ text_sensor:
   - platform: homeassistant
     id: av_bedled
     entity_id: light.bed_led
-    on_value: [ { lvgl.widget.update: { id: dot_bedled, bg_color: !lambda 'return x == "unavailable" ? lv_color_hex(0xE5534B) : lv_color_hex(0x3FB950);' } } ]
+    on_value: [ { script.execute: paint_dots } ]
   - platform: homeassistant
     id: av_shopint
     entity_id: light.shoplightsint_tasmota
-    on_value: [ { lvgl.widget.update: { id: dot_shopint, bg_color: !lambda 'return x == "unavailable" ? lv_color_hex(0xE5534B) : lv_color_hex(0x3FB950);' } } ]
+    on_value: [ { script.execute: paint_dots } ]
   - platform: homeassistant
     id: av_shopext
     entity_id: light.shoplightsext_tasmota
-    on_value: [ { lvgl.widget.update: { id: dot_shopext, bg_color: !lambda 'return x == "unavailable" ? lv_color_hex(0xE5534B) : lv_color_hex(0x3FB950);' } } ]
+    on_value: [ { script.execute: paint_dots } ]
   - platform: homeassistant
     id: av_shopos
     entity_id: cover.shop_door
-    on_value: [ { lvgl.widget.update: { id: dot_shopos, bg_color: !lambda 'return x == "unavailable" ? lv_color_hex(0xE5534B) : lv_color_hex(0x3FB950);' } } ]
+    on_value: [ { script.execute: paint_dots } ]
   - platform: homeassistant
     id: av_chicken
     entity_id: cover.chicken_coop_door
-    on_value: [ { lvgl.widget.update: { id: dot_chicken, bg_color: !lambda 'return x == "unavailable" ? lv_color_hex(0xE5534B) : lv_color_hex(0x3FB950);' } } ]
+    on_value: [ { script.execute: paint_dots } ]
   - platform: homeassistant
     id: av_pool
     entity_id: light.pool_lights
-    on_value: [ { lvgl.widget.update: { id: dot_pool, bg_color: !lambda 'return x == "unavailable" ? lv_color_hex(0xE5534B) : lv_color_hex(0x3FB950);' } } ]
+    on_value: [ { script.execute: paint_dots } ]
 
 debug:
   update_interval: 30s
@@ -384,8 +384,65 @@ script:
   - id: apply_theme
     then:
       - lambda: id(lcd).invert_colors(id(dark_mode));
+      - script.execute: paint_colors
+      - script.execute: paint_dots
+      - script.execute: { id: paint_door, door: 1 }
+      - script.execute: { id: paint_door, door: 2 }
+      - script.execute: { id: paint_door, door: 3 }
+      - script.execute: { id: paint_door, door: 4 }
+      - script.execute: { id: paint_door, door: 5 }
+      - script.execute: { id: paint_door, door: 6 }
       - lvgl.widget.update: { id: btn_dark, state: { checked: !lambda return id(dark_mode); } }
       - lvgl.widget.update: { id: btn_dark_auto, state: { checked: !lambda return id(dark_auto); } }
+
+  # Buttons look the same in both looks: blue with black text when off,
+  # lighter blue when on/pressed. Setup swatches keep their real colours.
+  # The white look is the panel inverted, so colours are pre-inverted there.
+  - id: paint_colors
+    then:
+      - lambda: |-
+          const bool dark = id(dark_mode);
+          auto real = [dark](uint32_t want) { return lv_color_hex(dark ? want : (want ^ 0xFFFFFF)); };
+          const lv_color_t off = real(0x2D66DD), on = real(0x8AB4F8), black = real(0x000000);
+          struct Swatch { lv_obj_t *btn; uint32_t col; };
+          const Swatch swatches[] = { {id(btn_warm), 0xFFB347}, {id(btn_teal), 0x2DBFB0},
+                                      {id(btn_blue), 0x2F81F7}, {id(btn_purple), 0xA371F7} };
+          auto paint_labels = [&](lv_obj_t *b) {
+            for (uint32_t i = 0; i < lv_obj_get_child_count(b); i++) {
+              lv_obj_t *c = lv_obj_get_child(b, i);
+              if (lv_obj_check_type(c, &lv_label_class) && c != id(lbl_gd1) && c != id(lbl_gd2) && c != id(lbl_gd3))
+                lv_obj_set_style_text_color(c, black, LV_PART_MAIN);
+            }
+          };
+          std::function<void(lv_obj_t *)> walk = [&](lv_obj_t *o) {
+            if (lv_obj_check_type(o, &lv_button_class)) {
+              uint32_t sw = 0;
+              for (auto &w : swatches) if (w.btn == o) sw = w.col;
+              const lv_color_t base = sw ? real(sw) : off;
+              lv_obj_set_style_bg_color(o, base, LV_PART_MAIN | LV_STATE_DEFAULT);
+              lv_obj_set_style_bg_color(o, sw ? base : on, LV_PART_MAIN | LV_STATE_CHECKED);
+              lv_obj_set_style_bg_color(o, sw ? base : on, LV_PART_MAIN | LV_STATE_PRESSED);
+              paint_labels(o);
+            }
+            for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) walk(lv_obj_get_child(o, i));
+          };
+          walk(lv_screen_active());
+          walk(lv_layer_top());
+
+  # Reset tab dots: green = online, red = offline (as Home Assistant sees it).
+  - id: paint_dots
+    mode: queued
+    then:
+      - lambda: |-
+          const bool dark = id(dark_mode);
+          struct Dot { lv_obj_t *dot; std::string state; };
+          const Dot dots[] = { {id(dot_bedled), id(av_bedled).state}, {id(dot_shopint), id(av_shopint).state},
+                               {id(dot_shopext), id(av_shopext).state}, {id(dot_shopos), id(av_shopos).state},
+                               {id(dot_chicken), id(av_chicken).state}, {id(dot_pool), id(av_pool).state} };
+          for (auto &d : dots) {
+            uint32_t c = d.state.empty() ? 0x8B949E : (d.state == "unavailable" ? 0xE5534B : 0x3FB950);
+            lv_obj_set_style_bg_color(d.dot, lv_color_hex(dark ? c : c ^ 0xFFFFFF), LV_PART_MAIN);
+          }
 
   # Show camera 1 (Front Door) or 2 (Driveway); wakes the screen if needed.
   - id: show_cam
@@ -459,6 +516,7 @@ script:
 
   - id: paint_door
     mode: queued
+    max_runs: 12
     parameters:
       door: int
     then:
@@ -478,7 +536,8 @@ script:
           uint32_t col = 0x8B949E;                       // grey: unknown/unavailable
           if (s == "closed") col = 0x3FB950;             // green
           else if (s == "open" || s == "opening" || s == "closing" || s == "stopped") col = 0xE5534B;  // red
-          lv_obj_set_style_text_color(lbl, lv_color_hex(col), 0);
+          // the white look is the display inverted, so pre-invert to keep true colours
+          lv_obj_set_style_text_color(lbl, lv_color_hex(id(dark_mode) ? col : col ^ 0xFFFFFF), 0);
 
   # Opens the confirm dialog for action N with the given question.
   - id: ask
@@ -685,7 +744,7 @@ lvgl:
                 id: tab_home
                 widgets:
                   - label: { id: lbl_clock, x: 6, y: 0, text_font: f_clock, text_color: 0xFFFFFF, text: "--:--" }
-                  - label: { id: lbl_date, x: 10, y: 72, text_color: 0xE6EDF3, text_font: montserrat_18, text: "" }
+                  - label: { id: lbl_date, x: 10, y: 72, styles: dim, text_font: montserrat_18, text: "" }
                   - obj:
                       styles: card
                       x: 270
@@ -998,6 +1057,7 @@ lvgl:
                       on_release:
                         - light.turn_on: { id: accent, brightness: !lambda return x / 100.0; }
                   - button:
+                      id: btn_warm
                       x: 0
                       y: 186
                       width: 84
@@ -1006,6 +1066,7 @@ lvgl:
                       widgets: [ { label: { align: CENTER, text: "Warm", text_color: 0x0F1720 } } ]
                       on_click: [ { light.turn_on: { id: accent, red: 100%, green: 55%, blue: 15%, effect: none } } ]
                   - button:
+                      id: btn_teal
                       x: 91
                       y: 186
                       width: 84
@@ -1014,6 +1075,7 @@ lvgl:
                       widgets: [ { label: { align: CENTER, text: "Teal", text_color: 0x0F1720 } } ]
                       on_click: [ { light.turn_on: { id: accent, red: 0%, green: 75%, blue: 70%, effect: none } } ]
                   - button:
+                      id: btn_blue
                       x: 182
                       y: 186
                       width: 84
@@ -1022,6 +1084,7 @@ lvgl:
                       widgets: [ { label: { align: CENTER, text: "Blue", text_color: 0x0F1720 } } ]
                       on_click: [ { light.turn_on: { id: accent, red: 0%, green: 30%, blue: 100%, effect: none } } ]
                   - button:
+                      id: btn_purple
                       x: 273
                       y: 186
                       width: 84
