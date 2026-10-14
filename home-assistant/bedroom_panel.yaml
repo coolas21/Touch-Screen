@@ -172,8 +172,11 @@ script:
             data:
               entity: light.livingroom_dimmer_tasmota
 
-  # Fades a dimmer from its current brightness down to 1% over 1.5 s
-  # (6 steps x 250 ms), then turns it off. Does nothing if it's already off.
+  # Fades a dimmer from its current brightness down to 1%, then turns it off.
+  # The brighter it starts, the longer it takes: 1 s + 0.04 s per percent
+  # (100% -> 5 s, 50% -> 3 s, 25% -> 2 s). Steps every 0.4 s; the dimmer's
+  # own short fade blends them into a smooth glide. Does nothing if it's
+  # already off.
   panel_fade_off:
     alias: "Panel - fade a dimmer off"
     mode: parallel
@@ -185,8 +188,10 @@ script:
       - condition: template
         value_template: "{{ is_state(entity, 'on') }}"
       - variables:
-          steps: 6
           start: "{{ ((state_attr(entity, 'brightness') or 255) / 255 * 100) | round(0) | int }}"
+          interval_ms: 400
+          duration_ms: "{{ (1000 + start * 40) | int }}"
+          steps: "{{ [ (duration_ms / interval_ms) | round(0) | int, 2 ] | max }}"
       - repeat:
           count: "{{ steps }}"
           sequence:
@@ -196,7 +201,7 @@ script:
               data:
                 brightness_pct: "{{ [ (start - (start - 1) * repeat.index / steps) | round(0) | int, 1 ] | max }}"
             - delay:
-                milliseconds: 250
+                milliseconds: "{{ interval_ms }}"
       - service: light.turn_off
         target:
           entity_id: "{{ entity }}"

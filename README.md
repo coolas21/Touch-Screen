@@ -73,7 +73,7 @@ driveway, `script.panel_cam_snapshot`:
 4. writes the time into `input_text.panel_cam_door_time` / `panel_cam_drive_time`.
    The panel watches those, so an open pop-up switches to the new picture at once.
 
-The panel scales the picture up (LVGL `LV_IMAGE_ALIGN_CONTAIN`) to fill a 330x320 box.
+The panel shows the picture at real size (about 23,000 pixels) in a 330x320 box; LVGL scaling scrambles it on this board.
 
 Setup: copy `panel_snapshot.py` to `/config/`, create `/config/www/panel_<random>/`,
 put the same random name in `bedroom_panel.yaml` and in ESPHome `secrets.yaml`

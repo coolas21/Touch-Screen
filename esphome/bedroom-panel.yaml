@@ -418,9 +418,9 @@ text_sensor:
 debug:
   update_interval: 30s
 
-# Camera pictures: HA keeps the latest door.jpg / drive.jpg (~5 KB, ~19k
-# pixels so the decoded picture fits in RAM without PSRAM). LVGL scales it up
-# to fill the left side of the pop-up.
+# Camera pictures: HA keeps the latest door.jpg / drive.jpg (~5 KB, ~23k
+# pixels so the decoded picture fits in RAM without PSRAM), shown at real
+# size on the left side of the pop-up.
 online_image:
   - id: cam_img
     url: "http://192.168.1.115:8123/"
@@ -433,13 +433,10 @@ online_image:
       - logger.log: { level: WARN, tag: cam, format: "snapshot loaded OK" }
       - globals.set: { id: cam_loaded, value: "true" }
       - lvgl.image.update: { id: img_cam, src: cam_img }
-      # fit inside the 330x320 box, keeping the picture's shape. No
-      # antialias: the pixels are stored byte-swapped for the display, so
-      # LVGL's smoothing blends garbage (squiggly lines); plain pixel
-      # doubling copies them untouched.
-      - lambda: |-
-          lv_image_set_inner_align(id(img_cam), LV_IMAGE_ALIGN_CONTAIN);
-          lv_image_set_antialias(id(img_cam), false);
+      # shown at its real size, centred in the 330x320 box. LVGL scaling
+      # (zoom / inner_align CONTAIN) scrambles these pictures on this panel
+      # (squiggly lines), so HA sends them as large as RAM allows instead.
+      - lambda: lv_image_set_inner_align(id(img_cam), LV_IMAGE_ALIGN_CENTER);
       - lvgl.widget.show: img_cam
       - lvgl.widget.hide: lbl_cam_status
     on_error:

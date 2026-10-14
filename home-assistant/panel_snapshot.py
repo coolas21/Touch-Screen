@@ -59,12 +59,12 @@ while i < len(data) - 3:
     i = end
 
 open(fixed, "wb").write(bytes(res))
-# ~19k pixels keeps the decoded picture (~37 KB) inside the panel's RAM; the
-# panel scales it up to fill the left side of the screen. Red and blue are
+# ~23k pixels keeps the decoded picture (~46 KB) inside the panel's RAM; the
+# panel shows it at real size (LVGL scaling garbles it). Red and blue are
 # swapped because the panel's display (BGR) draws photos with them reversed.
 subprocess.run(
     ["ffmpeg", "-y", "-loglevel", "error", "-i", fixed,
-     "-vf", "scale=trunc(sqrt(19000*iw/ih)/2)*2:-2,"
+     "-vf", "scale=trunc(sqrt(23000*iw/ih)/2)*2:-2,"
             "colorchannelmixer=rr=0:rb=1:bb=0:br=1,"
             # back to 4:2:0 - the mixer makes ffmpeg write 4:4:4, which the
             # panel's JPEG decoder rejects ("Error while decoding: 2")
