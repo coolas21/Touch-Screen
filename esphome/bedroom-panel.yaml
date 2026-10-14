@@ -192,8 +192,7 @@ globals:
   - id: cam_selected
     type: int
     initial_value: "1"
-  # This panel shows true colours (the dark navy theme) with the display
-  # inverted; un-inverted it shows a white "light" look.
+  # dark_mode true = true colours (dark navy theme); false = white look.
   - id: dark_mode
     type: bool
     restore_value: true
@@ -383,7 +382,9 @@ online_image:
 script:
   - id: apply_theme
     then:
-      - lambda: id(lcd).invert_colors(id(dark_mode));
+      # On this panel the controller powers up inverted: invert_colors(false)
+      # = true colours (dark theme), invert_colors(true) = the white look.
+      - lambda: id(lcd).invert_colors(!id(dark_mode));
       - script.execute: paint_colors
       - script.execute: paint_dots
       - script.execute: { id: paint_door, door: 1 }
@@ -452,7 +453,7 @@ script:
     then:
       - globals.set: { id: cam_selected, value: !lambda return cam; }
       # Snapshots must show true colours even when the white look is active.
-      - lambda: id(lcd).invert_colors(true);
+      - lambda: id(lcd).invert_colors(false);
       - if:
           condition: lvgl.is_paused
           then:
