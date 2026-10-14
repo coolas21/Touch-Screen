@@ -112,7 +112,7 @@ display:
       height: 320
     transform:
       swap_xy: true
-      mirror_x: true
+      mirror_x: false
       mirror_y: false
     invert_colors: false
     color_order: bgr
@@ -135,8 +135,8 @@ touchscreen:
       y_max: 3860
     transform:
       swap_xy: true
-      mirror_x: false
-      mirror_y: false
+      mirror_x: true
+      mirror_y: true
     on_touch:
       - logger.log:
           format: "touch x=%d y=%d raw_x=%d raw_y=%d"
