@@ -433,10 +433,13 @@ online_image:
       - logger.log: { level: WARN, tag: cam, format: "snapshot loaded OK" }
       - globals.set: { id: cam_loaded, value: "true" }
       - lvgl.image.update: { id: img_cam, src: cam_img }
-      # fit inside the 330x320 box, keeping the picture's shape
+      # fit inside the 330x320 box, keeping the picture's shape. No
+      # antialias: the pixels are stored byte-swapped for the display, so
+      # LVGL's smoothing blends garbage (squiggly lines); plain pixel
+      # doubling copies them untouched.
       - lambda: |-
           lv_image_set_inner_align(id(img_cam), LV_IMAGE_ALIGN_CONTAIN);
-          lv_image_set_antialias(id(img_cam), true);
+          lv_image_set_antialias(id(img_cam), false);
       - lvgl.widget.show: img_cam
       - lvgl.widget.hide: lbl_cam_status
     on_error:
