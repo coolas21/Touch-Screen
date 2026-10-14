@@ -23,6 +23,7 @@ A red **No HA** badge shows in the top-right corner when the panel isn't connect
 - `esphome/bedroom-panel.yaml`: the device config.
 - `esphome/secrets.example.yaml`: the secret names it expects.
 - `home-assistant/bedroom_panel.yaml`: the three scene scripts (goes in `/config/packages/`).
+- `enclosure/`: 3D-printable nightstand stand (OpenSCAD source and STLs). See `enclosure/README.md`.
 
 ## First-time setup
 
