@@ -176,9 +176,9 @@ script:
   # The Tuya dimmer ramps to every new level by itself in about 1 s and
   # reports the in-between levels while it does, so commands sent faster
   # than that fight its ramp (it stalled around 50%). So: one step every
-  # 1.2 s, letting each ~1 s ramp run into the next for one long glide.
-  # Brighter start = longer fade: 1.2 s + 0.05 s per percent (100% -> ~6 s,
-  # 50% -> ~3.6 s). Steps ease out (bigger drops at the top, smaller near
+  # 1.5 s, giving each ~1 s ramp time to finish before the next.
+  # Brighter start = longer fade: 1.5 s + 0.06 s per percent (100% -> 7.5 s,
+  # 50% -> 4.5 s). Steps ease out (bigger drops at the top, smaller near
   # the bottom) since LEDs look less different at high brightness. Does
   # nothing if it's already off.
   panel_fade_off:
@@ -193,8 +193,8 @@ script:
         value_template: "{{ is_state(entity, 'on') }}"
       - variables:
           start: "{{ ((state_attr(entity, 'brightness') or 255) / 255 * 100) | round(0) | int }}"
-          interval_ms: 1200
-          duration_ms: "{{ (1200 + start * 50) | int }}"
+          interval_ms: 1500
+          duration_ms: "{{ (1500 + start * 60) | int }}"
           steps: "{{ [ (duration_ms / interval_ms) | round(0) | int, 2 ] | max }}"
       - repeat:
           count: "{{ steps }}"
