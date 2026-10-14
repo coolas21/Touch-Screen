@@ -173,10 +173,14 @@ script:
               entity: light.livingroom_dimmer_tasmota
 
   # Fades a dimmer from its current brightness down to 1%, then turns it off.
-  # The brighter it starts, the longer it takes: 1 s + 0.04 s per percent
-  # (100% -> 5 s, 50% -> 3 s, 25% -> 2 s). Steps every 0.4 s; the dimmer's
-  # own short fade blends them into a smooth glide. Does nothing if it's
-  # already off.
+  # The Tuya dimmer ramps to every new level by itself in about 1 s and
+  # reports the in-between levels while it does, so commands sent faster
+  # than that fight its ramp (it stalled around 50%). So: one step every
+  # 1.2 s, letting each ~1 s ramp run into the next for one long glide.
+  # Brighter start = longer fade: 1.2 s + 0.05 s per percent (100% -> ~6 s,
+  # 50% -> ~3.6 s). Steps ease out (bigger drops at the top, smaller near
+  # the bottom) since LEDs look less different at high brightness. Does
+  # nothing if it's already off.
   panel_fade_off:
     alias: "Panel - fade a dimmer off"
     mode: parallel
@@ -189,8 +193,8 @@ script:
         value_template: "{{ is_state(entity, 'on') }}"
       - variables:
           start: "{{ ((state_attr(entity, 'brightness') or 255) / 255 * 100) | round(0) | int }}"
-          interval_ms: 400
-          duration_ms: "{{ (1000 + start * 40) | int }}"
+          interval_ms: 1200
+          duration_ms: "{{ (1200 + start * 50) | int }}"
           steps: "{{ [ (duration_ms / interval_ms) | round(0) | int, 2 ] | max }}"
       - repeat:
           count: "{{ steps }}"
@@ -199,7 +203,8 @@ script:
               target:
                 entity_id: "{{ entity }}"
               data:
-                brightness_pct: "{{ [ (start - (start - 1) * repeat.index / steps) | round(0) | int, 1 ] | max }}"
+                brightness_pct: >-
+                  {{ [ (1 + (start - 1) * (1 - repeat.index / steps) ** 1.5) | round(0) | int, 1 ] | max }}
             - delay:
                 milliseconds: "{{ interval_ms }}"
       - service: light.turn_off
