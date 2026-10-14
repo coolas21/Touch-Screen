@@ -2,7 +2,7 @@
 //
 // Three printed parts, styled after the Stream Deck desk stand (flat base,
 // triangular supports, panel leaning back):
-//   holder - tray the board drops into. USB notch in the side, window in the
+//   holder - tray the board drops into. USB opening in the side, window in the
 //            back so the on-board RGB LED glows onto the base behind it.
 //   bezel  - front frame, screwed on from the back with 4x M3 so no screws show.
 //   stand  - base plate with a front ledge and two triangular fins. The
@@ -17,31 +17,31 @@
 
 part = "assembly"; // [assembly, holder, bezel, stand]
 
-/* [Board: measure your board and check these first] */
+/* [Board: measured on the real board, front view] */
 board_w   = 111.11; // PCB outline, long side (LCDwiki)
 board_h   = 60.88;  // PCB outline, short side (LCDwiki)
 stack_front = 5.65; // back of PCB to front of the touch panel (LCDwiki "D")
-rear_clear  = 9.0;  // tallest part on the back of the PCB (ESP32 module, USB-C, JST, buttons)
+rear_clear  = 5.5;  // tallest part on the back of the PCB is 5 mm, plus 0.5 clearance
 fit       = 0.4;    // clearance around the PCB on each side
 
-active_w  = 83.52;  // lit area of the LCD (LCDwiki)
-active_h  = 55.68;
-active_x  = (board_w - active_w) / 2; // board left edge -> left edge of lit area (MEASURE)
-active_y  = (board_h - active_h) / 2; // board bottom edge -> bottom edge of lit area (MEASURE)
+active_w  = 83;     // lit area of the LCD (measured)
+active_h  = 55;
+active_x  = 12;     // board left edge -> left edge of lit area
+active_y  = board_h - 3 - active_h; // lit area starts 3 mm below the board's top edge
 window_margin = 0.8; // extra opening around the lit area on each side
 
 /* [USB port] */
 usb_side  = "right";   // [left, right, both] short edge with the USB-C port (front view)
-usb_y     = board_h/2; // port centre, from the board's bottom edge
-usb_open_w = 13;       // notch width, sized for a USB-C plug's overmold
-usb_open_h = 8;        // notch height below the board (rest is open to the bezel)
-usb_center_below_pcb = 1.6; // port centreline below the back face of the PCB
+usb_y     = board_h/2; // port centre, from the board's bottom edge (centred)
+usb_open_w = 15;       // opening for the plug housing, along the edge
+usb_open_h = 8;        // opening for the plug housing, through the thickness
+usb_center_below_pcb = 1.5; // port is 3 mm tall on the back of the PCB
 
 /* [RGB LED window] */
-led_x     = board_w/2; // window centre from board left edge (front view); LED is dead centre
-led_y     = board_h/2; // window centre from board bottom edge
-led_win_w = 34;        // window size; big on purpose so it clears the LED
-led_win_h = 20;        // even if the position above is a few mm off
+led_x     = board_w - 52; // LED is 52 mm from the right (USB) edge
+led_y     = board_h - 31; // and 31 mm from the top edge
+led_win_w = 34;        // window size; bigger than the LED so more light gets out
+led_win_h = 20;
 
 /* [Holder and bezel] */
 wall      = 8;     // border around the board (holds the bezel screws)
@@ -119,11 +119,11 @@ module holder() {
         // LED window
         translate([bx0 + led_x, by0 + led_y, -eps]) slot(led_win_w, led_win_h, back_t + 2*eps);
 
-        // USB notch, open to the rim (the bezel closes it from the front)
+        // USB opening, centred on the port
         usb_z = z_pcb - usb_center_below_pcb - usb_open_h/2;
         for (s = (usb_side == "both") ? [0, 1] : (usb_side == "left") ? [0] : [1])
             translate([s == 0 ? -eps : outer_w - wall - eps, by0 + usb_y - usb_open_w/2, usb_z])
-                cube([wall + 2*eps, usb_open_w, holder_d]);
+                cube([wall + 2*eps, usb_open_w, usb_open_h]);
 
         // bezel screws from the back
         for (p = screw_pts) translate([p[0], p[1], 0]) {

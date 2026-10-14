@@ -12,7 +12,7 @@ through a window in the back and lights up the white base behind the screen.
 
 | File | Print orientation | Notes |
 |---|---|---|
-| `stl/holder.stl` | back plate on the bed | Tray the board drops into. USB-C notch in the side, LED window in the back, 4 corner pads the PCB rests on. |
+| `stl/holder.stl` | back plate on the bed | Tray the board drops into. USB-C opening in the right side, LED window in the back, 4 corner pads the PCB rests on. |
 | `stl/bezel.stl` | face down | Front frame. Screwed on from the back, so no screws show on the front. |
 | `stl/stand.stl` | as exported (base on the bed) | Base, front ledge, and two fins with locating pegs. |
 
@@ -21,24 +21,19 @@ White PLA, 0.2 mm layers, 3 walls, 15-20% infill. No supports needed.
 **Hardware:** 4 × M3 × 12 screws (pan or socket head), self-tapping straight into the bezel.
 Stick your rubber pads anywhere on the flat bottom of the base.
 
-## Before you print: measure your board
+## Board measurements
 
-The outline and screen sizes come from LCDwiki, but I couldn't get their drawing for
-where the port, LED and lit area sit, so those are parameters with safe guesses.
-The USB-C port is on the right and the LED is dead centre on the back, and the model is set up for that.
-Measure the rest with calipers, set them at the top of `nightstand_stand.scad`, and re-export the STLs
-(OpenSCAD: set `part`, F6, File → Export → STL).
+The model is set to these measurements from the real board (front view, screen in landscape,
+USB-C on the right). They're the parameters at the top of `nightstand_stand.scad`. Change them and
+re-export the STLs if anything is off (OpenSCAD: set `part`, F6, File → Export → STL).
 
-Measure everything **looking at the screen**, from the board's **bottom-left corner**, screen in landscape.
-
-| Parameter | What to measure | Default |
+| What | Measured | Parameter |
 |---|---|---|
-| `active_x`, `active_y` | Board edge to the edge of the **lit** area (turn the screen on, show a white page). | Centred |
-| `usb_y` | Height of the USB-C port's centre from the bottom edge (`usb_side` is set to `right`). | Centred |
-| `rear_clear` | Height of the tallest part on the back of the PCB (usually the USB-C port or a JST plug). | 9 mm |
-
-The holder and stand are only sized from the board outline, so if you just want to test the fit
-and the look, they're fine to print with the defaults.
+| PCB outline | 111.11 × 60.88 mm (LCDwiki) | `board_w`, `board_h` |
+| Lit screen area | 83 × 55 mm, 12 mm from the left edge, 3 mm from the top | `active_*` |
+| USB-C port | Right edge, centred, on the back of the PCB, 3 mm tall. The opening is 15 × 8 mm, centred on the port, for the plug housing. | `usb_*` |
+| Tallest part on the back | 5 mm (the holder allows 5.5) | `rear_clear` |
+| RGB LED | 52 mm from the right edge, 31 mm from the top. The back window is a 34 × 20 mm slot centred on it. | `led_*` |
 
 ## Assembly
 
