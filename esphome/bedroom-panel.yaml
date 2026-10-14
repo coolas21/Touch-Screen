@@ -213,23 +213,35 @@ sensor:
     id: t_bedroom
     entity_id: sensor.bedroom_temperature
     on_value:
-      - lvgl.label.update: { id: lbl_t_bedroom, text: { format: "%.0f°", args: [x] } }
+      - lvgl.label.update:
+          id: lbl_t_bedroom
+          # "--" when HA has no reading (otherwise "nan" shows as boxes)
+          text: !lambda 'return std::isnan(x) ? std::string("--°") : str_sprintf("%.0f°", x);'
   - platform: homeassistant
     id: t_living
     entity_id: sensor.living_room_temperature
     on_value:
-      - lvgl.label.update: { id: lbl_t_living, text: { format: "%.0f°", args: [x] } }
+      - lvgl.label.update:
+          id: lbl_t_living
+          # "--" when HA has no reading (otherwise "nan" shows as boxes)
+          text: !lambda 'return std::isnan(x) ? std::string("--°") : str_sprintf("%.0f°", x);'
   - platform: homeassistant
     id: t_upstairs
     entity_id: sensor.upstairs_temperature
     on_value:
-      - lvgl.label.update: { id: lbl_t_upstairs, text: { format: "%.0f°", args: [x] } }
+      - lvgl.label.update:
+          id: lbl_t_upstairs
+          # "--" when HA has no reading (otherwise "nan" shows as boxes)
+          text: !lambda 'return std::isnan(x) ? std::string("--°") : str_sprintf("%.0f°", x);'
   - platform: homeassistant
     id: t_outside
     entity_id: weather.forecast_home
     attribute: temperature
     on_value:
-      - lvgl.label.update: { id: lbl_t_outside, text: { format: "%.0f°", args: [x] } }
+      - lvgl.label.update:
+          id: lbl_t_outside
+          # "--" when HA has no reading (otherwise "nan" shows as boxes)
+          text: !lambda 'return std::isnan(x) ? std::string("--°") : str_sprintf("%.0f°", x);'
   - platform: debug
     free:
       id: heap_free
