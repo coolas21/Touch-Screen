@@ -7,7 +7,11 @@ DQT segment, then uses ffmpeg to write a small baseline JPEG.
 
 Usage: python3 panel_snapshot.py <folder> <name>
   reads  <folder>/<name>_full.jpg, writes <folder>/<name>.jpg
+
+<name>.jpg is only replaced once the new picture is complete, so the panel
+can always download the last good one.
 """
+import os
 import struct
 import subprocess
 import sys
@@ -16,6 +20,7 @@ folder, name = sys.argv[1], sys.argv[2]
 src = f"{folder}/{name}_full.jpg"
 fixed = f"{folder}/{name}_fixed.jpg"
 out = f"{folder}/{name}.jpg"
+tmp = f"{folder}/{name}_new.jpg"
 
 data = open(src, "rb").read()
 
@@ -54,8 +59,14 @@ while i < len(data) - 3:
     i = end
 
 open(fixed, "wb").write(bytes(res))
+# ~19k pixels keeps the decoded picture (~37 KB) inside the panel's RAM; the
+# panel scales it up to fill the left side of the screen. Red and blue are
+# swapped because the panel's display (BGR) draws photos with them reversed.
 subprocess.run(
     ["ffmpeg", "-y", "-loglevel", "error", "-i", fixed,
-     "-vf", "scale=trunc(sqrt(19000*iw/ih)/2)*2:-2", "-q:v", "6", out],
+     "-vf", "scale=trunc(sqrt(19000*iw/ih)/2)*2:-2,"
+            "colorchannelmixer=rr=0:rb=1:bb=0:br=1",
+     "-q:v", "6", tmp],
     check=True,
 )
+os.replace(tmp, out)

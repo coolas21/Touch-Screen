@@ -4,26 +4,40 @@
 # kitchen WLED strip (handled separately).
 # Camera snapshots for the panel. Eufy's saved event thumbnails can't be
 # decoded outside the Eufy app, and its photos are 100-300 KB - far too big
-# for the panel's RAM. So HA grabs a fresh live frame through the Eufy add-on,
-# shrinks it to ~10 KB, and the panel downloads that. Random folder name so
-# the file can't be guessed.
+# for the panel's RAM. So whenever a camera sees something, HA grabs a live
+# frame through the Eufy add-on, shrinks it to ~5 KB and keeps it as
+# door.jpg / drive.jpg. The panel just downloads the stored picture when
+# tapped (instant), and the time it was taken is shown next to it. Random
+# folder name so the file can't be guessed.
 shell_command:
   panel_clear_snapshot: >-
     rm -f /config/www/panel_CHANGE_ME_RANDOM/{{ name }}.jpg
   panel_shrink_snapshot: >-
     python3 /config/panel_snapshot.py /config/www/panel_CHANGE_ME_RANDOM {{ name }}
 
+input_text:
+  panel_cam_door_time:
+    name: Panel Front Door picture time
+    max: 40
+  panel_cam_drive_time:
+    name: Panel Driveway picture time
+    max: 40
+
 automation:
-  - alias: "Panel - prepare camera snapshot on doorbell / driveway person"
+  - alias: "Panel - update stored camera picture"
     id: panel_prepare_cam_snapshot
     mode: parallel
     trigger:
       - platform: state
-        entity_id: binary_sensor.front_doorbell_doorbell
+        entity_id:
+          - binary_sensor.front_doorbell_doorbell
+          - binary_sensor.front_doorbell_person
         to: "on"
         id: door
       - platform: state
-        entity_id: binary_sensor.driveway_person
+        entity_id:
+          - binary_sensor.driveway_person
+          - binary_sensor.driveway_vehicle
         to: "on"
         id: drive
     action:
@@ -36,16 +50,15 @@ script:
   panel_cam_snapshot:
     alias: "Panel - camera snapshot"
     mode: queued
+    max: 4
     fields:
       camera:
         example: camera.front_doorbell
       name:
         example: door
     sequence:
-      - service: shell_command.panel_clear_snapshot
-        data:
-          name: "{{ name }}"
-      # Retry if the add-on handed back the undecodable event thumbnail.
+      # Retry if the add-on handed back the undecodable event thumbnail. The
+      # previous picture stays in place until a new one is ready.
       - repeat:
           sequence:
             - service: eufy_event_gateway.capture_snapshot
@@ -65,6 +78,16 @@ script:
           until:
             - condition: template
               value_template: "{{ shrink.returncode == 0 or repeat.index >= 3 }}"
+      # The panel watches this; a change means a new picture is ready.
+      - if:
+          - condition: template
+            value_template: "{{ shrink.returncode == 0 }}"
+        then:
+          - service: input_text.set_value
+            target:
+              entity_id: "input_text.panel_cam_{{ name }}_time"
+            data:
+              value: "{{ now().strftime('%b %-d, %-I:%M:%S %p') }}"
 
   panel_all_off:
     alias: "All Off"

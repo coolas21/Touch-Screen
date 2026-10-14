@@ -260,14 +260,23 @@ binary_sensor:
     id: doorbell_ring
     entity_id: binary_sensor.front_doorbell_doorbell
     on_press:
-      - script.execute: { id: show_cam, cam: 1 }
+      - script.execute: { id: show_cam, cam: 1, wait_new: true }
   - platform: homeassistant
     id: driveway_person
     entity_id: binary_sensor.driveway_person
     on_press:
-      - script.execute: { id: show_cam, cam: 2 }
+      - script.execute: { id: show_cam, cam: 2, wait_new: true }
 
 text_sensor:
+  # When HA stored each camera picture. A change means a new picture is ready.
+  - platform: homeassistant
+    id: cam_time_door
+    entity_id: input_text.panel_cam_door_time
+    on_value: [ { script.execute: { id: cam_new_picture, cam: 1 } } ]
+  - platform: homeassistant
+    id: cam_time_drive
+    entity_id: input_text.panel_cam_drive_time
+    on_value: [ { script.execute: { id: cam_new_picture, cam: 2 } } ]
   # Dark Mode follows the sun when "Auto at night" is on. Fires only on a
   # change, so a manual tap holds until the next sunrise/sunset.
   - platform: homeassistant
@@ -409,8 +418,9 @@ text_sensor:
 debug:
   update_interval: 30s
 
-# Camera snapshots: Eufy thumbnails are 288x176 baseline JPEG (~50 KB);
-# decoded smaller to fit in RAM (no PSRAM).
+# Camera pictures: HA keeps the latest door.jpg / drive.jpg (~5 KB, ~19k
+# pixels so the decoded picture fits in RAM without PSRAM). LVGL scales it up
+# to fill the left side of the pop-up.
 online_image:
   - id: cam_img
     url: "http://192.168.1.115:8123/"
@@ -423,9 +433,14 @@ online_image:
       - logger.log: { level: WARN, tag: cam, format: "snapshot loaded OK" }
       - globals.set: { id: cam_loaded, value: "true" }
       - lvgl.image.update: { id: img_cam, src: cam_img }
+      # fit inside the 330x320 box, keeping the picture's shape
+      - lambda: |-
+          lv_image_set_inner_align(id(img_cam), LV_IMAGE_ALIGN_CONTAIN);
+          lv_image_set_antialias(id(img_cam), true);
+      - lvgl.widget.show: img_cam
       - lvgl.widget.hide: lbl_cam_status
     on_error:
-      # usually just "not ready yet" (HA deletes the old picture first) - show_cam retries
+      # network hiccup or no picture stored yet - show_cam retries
       - lambda: |-
           ESP_LOGW("cam", "snapshot not ready / failed | free heap %u, largest block %u",
                    (unsigned) id(heap_free).state, (unsigned) id(heap_block).state);
@@ -580,10 +595,15 @@ script:
           }
 
   # Show camera 1 (Front Door) or 2 (Driveway); wakes the screen if needed.
+  # Cams buttons (wait_new false) show HA's stored picture straight away.
+  # Doorbell / driveway person (wait_new true) wait up to 15 s for HA to store
+  # a fresh picture (cam_new_picture fetches it), then fall back to the
+  # stored one.
   - id: show_cam
     mode: restart
     parameters:
       cam: int
+      wait_new: bool
     then:
       - globals.set: { id: cam_selected, value: !lambda return cam; }
       - if:
@@ -598,41 +618,71 @@ script:
       - lvgl.label.update:
           id: lbl_cam_title
           text: !lambda 'return id(cam_selected) == 1 ? std::string("Front Door") : std::string("Driveway");'
-      - lvgl.label.update: { id: lbl_cam_status, text: "Loading..." }
+      - script.execute: update_cam_time
+      - lvgl.label.update:
+          id: lbl_cam_status
+          text: !lambda 'return wait_new ? std::string("Getting picture...") : std::string("Loading...");'
       - lvgl.widget.show: lbl_cam_status
+      - lvgl.widget.hide: img_cam
       - lvgl.widget.hide: wake_shield
       - lvgl.widget.show: dlg_cam
       - globals.set: { id: cam_loaded, value: "false" }
-      # HA is grabbing a fresh frame and shrinking it (about 2-7 s); poll for it.
-      - delay: 2500ms
+      - if:
+          condition:
+            lambda: return wait_new;
+          then:
+            - wait_until:
+                condition:
+                  lambda: return id(cam_loaded);
+                timeout: 15s
       - repeat:
-          count: 8
+          count: 3
           then:
             - if:
                 condition:
                   lambda: return !id(cam_loaded);
                 then:
                   - script.execute: fetch_cam
-                  - delay: 2500ms
+                  - wait_until:
+                      condition:
+                        lambda: return id(cam_loaded);
+                      timeout: 4s
       - if:
           condition:
             lambda: return !id(cam_loaded);
           then:
-            - lvgl.label.update: { id: lbl_cam_status, text: "Couldn't load picture" }
-      - delay: 25s
+            - lvgl.label.update: { id: lbl_cam_status, text: "No picture yet" }
+      - delay: 30s
       - script.execute: close_cam
 
-  # Cams tab buttons: ask HA for a fresh snapshot, then open the pop-up.
-  - id: request_cam
+  # HA stored a new picture: if that camera's pop-up is open, show it.
+  - id: cam_new_picture
     parameters:
       cam: int
     then:
-      - homeassistant.action:
-          action: script.panel_cam_snapshot
-          data:
-            camera: !lambda 'return cam == 1 ? std::string("camera.front_doorbell") : std::string("camera.driveway");'
-            name: !lambda 'return cam == 1 ? std::string("door") : std::string("drive");'
-      - script.execute: { id: show_cam, cam: !lambda return cam; }
+      - if:
+          condition:
+            lambda: |-
+              return id(cam_selected) == cam &&
+                     !lv_obj_has_flag(id(dlg_cam), LV_OBJ_FLAG_HIDDEN);
+          then:
+            - script.execute: update_cam_time
+            - script.execute: fetch_cam
+
+  # "Oct 14, 12:57:59 PM" from HA -> "Oct 14" / "12:57 PM"
+  - id: update_cam_time
+    then:
+      - lvgl.label.update:
+          id: lbl_cam_time
+          text: !lambda |-
+            std::string t = id(cam_selected) == 1 ? id(cam_time_door).state
+                                                  : id(cam_time_drive).state;
+            if (t.empty() || t == "unknown" || t == "unavailable") return std::string("");
+            size_t c = t.rfind(':');
+            if (c != std::string::npos && c + 3 <= t.size()) t.erase(c, 3);
+            size_t k = t.find(", ");
+            if (k != std::string::npos) t.replace(k, 2, "\n");
+            return t;
 
   - id: fetch_cam
     then:
@@ -837,14 +887,53 @@ lvgl:
           height: 100%
           bg_color: 0x000000
           bg_opa: COVER
+          pad_all: 0
+          border_width: 0
+          radius: 0
+          scrollable: false
           on_click:
             - globals.set: { id: cam_woke_screen, value: "false" }
             - script.execute: close_cam
           widgets:
-            - label: { id: lbl_cam_title, align: TOP_MID, y: 6, text: "Front Door", text_font: montserrat_26 }
-            - image: { id: img_cam, align: CENTER, y: 6, src: cam_img }
-            - label: { id: lbl_cam_status, align: CENTER, text: "Loading...", text_font: montserrat_20 }
-            - label: { align: BOTTOM_MID, y: -6, styles: dim, text: "Tap to close" }
+            # left 330x320: the picture, scaled to fit (see on_download_finished)
+            - image: { id: img_cam, x: 0, y: 0, width: 330, height: 320, hidden: true, src: cam_img }
+            - label:
+                id: lbl_cam_status
+                x: 0
+                y: 150
+                width: 330
+                text_align: CENTER
+                text_color: 0x9DA7B3
+                text_font: montserrat_20
+                text: "Loading..."
+            # right 150 px: name, when the picture was taken, tap to close
+            - label:
+                id: lbl_cam_title
+                x: 335
+                y: 70
+                width: 140
+                text_align: CENTER
+                long_mode: WRAP
+                text_color: 0xE6EDF3
+                text_font: montserrat_26
+                text: "Front Door"
+            - label:
+                id: lbl_cam_time
+                x: 335
+                y: 150
+                width: 140
+                text_align: CENTER
+                long_mode: WRAP
+                text_color: 0xE6EDF3
+                text_font: montserrat_20
+                text: ""
+            - label:
+                x: 335
+                y: 280
+                width: 140
+                text_align: CENTER
+                text_color: 0x9DA7B3
+                text: "Tap to close"
       - label:
           id: badge_no_ha
           align: TOP_RIGHT
@@ -1110,14 +1199,14 @@ lvgl:
                       width: 450
                       height: 110
                       widgets: [ { label: { align: CENTER, text: "Front Door", text_font: montserrat_26 } } ]
-                      on_click: [ { script.execute: { id: request_cam, cam: 1 } } ]
+                      on_click: [ { script.execute: { id: show_cam, cam: 1, wait_new: false } } ]
                   - button:
                       x: 0
                       y: 128
                       width: 450
                       height: 110
                       widgets: [ { label: { align: CENTER, text: "Driveway", text_font: montserrat_26 } } ]
-                      on_click: [ { script.execute: { id: request_cam, cam: 2 } } ]
+                      on_click: [ { script.execute: { id: show_cam, cam: 2, wait_new: false } } ]
 
               # ---------------------------------------------------- RESET
               - name: "Reset"
