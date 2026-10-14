@@ -39,10 +39,12 @@ logger:
 api:
   encryption:
     key: !secret bedroom_panel_api_key
+  # "No HA" badge: only HA itself counts (it subscribes to states); log
+  # viewers like the ESPHome dashboard connecting/disconnecting don't.
   on_client_connected:
-    - lvgl.widget.hide: badge_no_ha
+    - script.execute: check_ha
   on_client_disconnected:
-    - lvgl.widget.show: badge_no_ha
+    - script.execute: check_ha
 
 ota:
   - platform: esphome
@@ -165,6 +167,13 @@ touchscreen:
       mirror_x: true
       mirror_y: true
     on_touch:
+      # LVGL is paused while a camera picture is painted on screen
+      - if:
+          condition:
+            lambda: return id(cam_painting);
+          then:
+            - globals.set: { id: cam_woke_screen, value: "false" }
+            - script.execute: close_cam_soon
       - logger.log:
           format: "touch x=%d y=%d raw_x=%d raw_y=%d"
           args: [touch.x, touch.y, touch.x_raw, touch.y_raw]
@@ -194,9 +203,29 @@ globals:
   - id: cam_selected
     type: int
     initial_value: "1"
-  - id: cam_loaded
+  # camera pop-up: the picture arrives as 48-row strips painted straight
+  # onto the screen (see online_image below)
+  - id: cam_fresh          # HA stored a new picture for the open pop-up
     type: bool
     initial_value: "false"
+  - id: cam_painting       # a picture is on screen (LVGL paused)
+    type: bool
+    initial_value: "false"
+  - id: cam_tile
+    type: int
+    initial_value: "0"
+  - id: cam_tiles
+    type: int
+    initial_value: "0"
+  - id: cam_tile_ok
+    type: bool
+    initial_value: "false"
+  - id: cam_w
+    type: int
+    initial_value: "0"
+  - id: cam_h
+    type: int
+    initial_value: "0"
   # dark_mode true = true colours (dark navy theme); false = white look.
   - id: dark_mode
     type: bool
@@ -277,6 +306,13 @@ text_sensor:
     id: cam_time_drive
     entity_id: input_text.panel_cam_drive_time
     on_value: [ { script.execute: { id: cam_new_picture, cam: 2 } } ]
+  # "WxHxN": picture size and number of strips (written by HA with the time)
+  - platform: homeassistant
+    id: cam_geo_door
+    entity_id: input_text.panel_cam_door_geo
+  - platform: homeassistant
+    id: cam_geo_drive
+    entity_id: input_text.panel_cam_drive_geo
   # Dark Mode follows the sun when "Auto at night" is on. Fires only on a
   # change, so a manual tap holds until the next sunrise/sunset.
   - platform: homeassistant
@@ -418,35 +454,55 @@ text_sensor:
 debug:
   update_interval: 30s
 
-# Camera pictures: HA keeps the latest door.jpg / drive.jpg (~5 KB, ~23k
-# pixels so the decoded picture fits in RAM without PSRAM), shown at real
-# size on the left side of the pop-up.
+# Re-check the "No HA" badge now and then (backstop for missed events).
+interval:
+  - interval: 10s
+    then:
+      - script.execute: check_ha
+
+# Camera pictures: the panel has no PSRAM and LVGL scaling garbles photos,
+# so HA sends each picture full size (fits 330x320) cut into strips 48 rows
+# tall (door_0.jpg, door_1.jpg, ...; <= ~32 KB decoded each). They are
+# downloaded one at a time into this buffer and painted straight onto the
+# screen while LVGL is paused, so the picture never needs to fit in RAM.
 online_image:
   - id: cam_img
     url: "http://192.168.1.115:8123/"
     format: JPEG
     type: RGB565
-    # HA serves ~4 KB baseline JPEGs sized to ~19k pixels (~37 KB decoded)
     buffer_size: 16384
     update_interval: never
     on_download_finished:
-      - logger.log: { level: WARN, tag: cam, format: "snapshot loaded OK" }
-      - globals.set: { id: cam_loaded, value: "true" }
-      - lvgl.image.update: { id: img_cam, src: cam_img }
-      # shown at its real size, centred in the 330x320 box. LVGL scaling
-      # (zoom / inner_align CONTAIN) scrambles these pictures on this panel
-      # (squiggly lines), so HA sends them as large as RAM allows instead.
-      - lambda: lv_image_set_inner_align(id(img_cam), LV_IMAGE_ALIGN_CENTER);
-      - lvgl.widget.show: img_cam
-      - lvgl.widget.hide: lbl_cam_status
-    on_error:
-      # network hiccup or no picture stored yet - show_cam retries
       - lambda: |-
-          ESP_LOGW("cam", "snapshot not ready / failed | free heap %u, largest block %u",
+          if (!id(cam_painting)) return;
+          auto *im = id(cam_img);
+          int x0 = (330 - id(cam_w)) / 2;
+          int y0 = (320 - id(cam_h)) / 2 + id(cam_tile) * 48;
+          id(lcd).draw_pixels_at(x0, y0, im->get_width(), im->get_height(),
+                                 im->get_data_start(), display::COLOR_ORDER_RGB,
+                                 display::COLOR_BITNESS_565, true, 0, 0, 0);
+          id(cam_tile_ok) = true;
+    on_error:
+      # network hiccup or no picture stored yet - show_cam retries once
+      - lambda: |-
+          ESP_LOGW("cam", "strip %d failed | free heap %u, largest block %u", id(cam_tile),
                    (unsigned) id(heap_free).state, (unsigned) id(heap_block).state);
 
 # ------------------------------------------------------------------ scripts
 script:
+  - id: check_ha
+    mode: restart
+    then:
+      - delay: 1s
+      - if:
+          condition:
+            api.connected:
+              state_subscription_only: true
+          then:
+            - lvgl.widget.hide: badge_no_ha
+          else:
+            - lvgl.widget.show: badge_no_ha
+
   - id: apply_theme
     then:
       # Colours are painted directly for day/night; the display itself always
@@ -597,7 +653,7 @@ script:
   # Show camera 1 (Front Door) or 2 (Driveway); wakes the screen if needed.
   # Cams buttons (wait_new false) show HA's stored picture straight away.
   # Doorbell / driveway person (wait_new true) wait up to 15 s for HA to store
-  # a fresh picture (cam_new_picture fetches it), then fall back to the
+  # a fresh picture (cam_new_picture flags it), then fall back to the
   # stored one.
   - id: show_cam
     mode: restart
@@ -606,10 +662,15 @@ script:
       wait_new: bool
     then:
       - globals.set: { id: cam_selected, value: !lambda return cam; }
+      - globals.set: { id: cam_painting, value: "false" }
       - if:
           condition: lvgl.is_paused
           then:
-            - globals.set: { id: cam_woke_screen, value: "true" }
+            - if:
+                condition:
+                  lambda: return !id(backlight).current_values.is_on();
+                then:
+                  - globals.set: { id: cam_woke_screen, value: "true" }
             - lvgl.resume:
             - lvgl.widget.redraw:
       - light.turn_on:
@@ -623,39 +684,76 @@ script:
           id: lbl_cam_status
           text: !lambda 'return wait_new ? std::string("Getting picture...") : std::string("Loading...");'
       - lvgl.widget.show: lbl_cam_status
-      - lvgl.widget.hide: img_cam
       - lvgl.widget.hide: wake_shield
       - lvgl.widget.show: dlg_cam
-      - globals.set: { id: cam_loaded, value: "false" }
+      - globals.set: { id: cam_fresh, value: "false" }
       - if:
           condition:
             lambda: return wait_new;
           then:
             - wait_until:
                 condition:
-                  lambda: return id(cam_loaded);
+                  lambda: return id(cam_fresh);
                 timeout: 15s
-      - repeat:
-          count: 3
+            - script.execute: update_cam_time
+      - lambda: |-
+          std::string g = id(cam_selected) == 1 ? id(cam_geo_door).state : id(cam_geo_drive).state;
+          int w = 0, h = 0, n = 0;
+          if (sscanf(g.c_str(), "%dx%dx%d", &w, &h, &n) != 3 || w <= 0 || w > 330 ||
+              h <= 0 || h > 320 || n <= 0 || n > 8)
+            n = 0;
+          id(cam_w) = w;
+          id(cam_h) = h;
+          id(cam_tiles) = n;
+      - if:
+          condition:
+            lambda: return id(cam_tiles) == 0;
           then:
-            - if:
+            - lvgl.label.update: { id: lbl_cam_status, text: "No picture yet" }
+          else:
+            # draw the pop-up (title, time, tap to close), then freeze LVGL
+            # so it doesn't paint over the strips
+            - lvgl.widget.hide: lbl_cam_status
+            - delay: 250ms
+            - lvgl.pause:
+            - globals.set: { id: cam_painting, value: "true" }
+            - globals.set: { id: cam_tile, value: "0" }
+            - while:
                 condition:
-                  lambda: return !id(cam_loaded);
+                  lambda: return id(cam_tile) < id(cam_tiles);
                 then:
+                  - globals.set: { id: cam_tile_ok, value: "false" }
                   - script.execute: fetch_cam
                   - wait_until:
                       condition:
-                        lambda: return id(cam_loaded);
+                        lambda: return id(cam_tile_ok);
                       timeout: 4s
-      - if:
-          condition:
-            lambda: return !id(cam_loaded);
-          then:
-            - lvgl.label.update: { id: lbl_cam_status, text: "No picture yet" }
+                  - if:
+                      condition:
+                        lambda: return !id(cam_tile_ok);
+                      then:
+                        - script.execute: fetch_cam
+                        - wait_until:
+                            condition:
+                              lambda: return id(cam_tile_ok);
+                            timeout: 4s
+                  - lambda: |-
+                      if (id(cam_tile_ok)) id(cam_tile)++;
+                      else id(cam_tile) = 99;   // give up
+            - if:
+                condition:
+                  lambda: return id(cam_tile) == 99;
+                then:
+                  - globals.set: { id: cam_painting, value: "false" }
+                  - lvgl.resume:
+                  - lvgl.widget.redraw:
+                  - lvgl.label.update: { id: lbl_cam_status, text: "Couldn't load picture" }
+                  - lvgl.widget.show: lbl_cam_status
       - delay: 30s
       - script.execute: close_cam
 
-  # HA stored a new picture: if that camera's pop-up is open, show it.
+  # HA stored a new picture for this camera: if its pop-up is waiting, go;
+  # if it's already showing an older picture, repaint with the new one.
   - id: cam_new_picture
     parameters:
       cam: int
@@ -666,8 +764,16 @@ script:
               return id(cam_selected) == cam &&
                      !lv_obj_has_flag(id(dlg_cam), LV_OBJ_FLAG_HIDDEN);
           then:
-            - script.execute: update_cam_time
-            - script.execute: fetch_cam
+            - if:
+                condition:
+                  lambda: return id(cam_painting);
+                then:
+                  - script.execute:
+                      id: show_cam
+                      cam: !lambda return cam;
+                      wait_new: false
+                else:
+                  - globals.set: { id: cam_fresh, value: "true" }
 
   # "Oct 14, 12:57:59 PM" from HA -> "Oct 14" / "12:57 PM"
   - id: update_cam_time
@@ -684,23 +790,32 @@ script:
             if (k != std::string::npos) t.replace(k, 2, "\n");
             return t;
 
+  # Download strip cam_tile of the selected camera (?t= defeats caching).
   - id: fetch_cam
     then:
-      - lambda: |-
-          ESP_LOGW("cam", "fetching %s.jpg | free heap %u, largest block %u",
-                   id(cam_selected) == 1 ? "door" : "drive",
-                   (unsigned) id(heap_free).state, (unsigned) id(heap_block).state);
       - online_image.set_url:
           id: cam_img
           url: !lambda |-
             return std::string("http://192.168.1.115:8123${cam_path}/") +
-                   (id(cam_selected) == 1 ? "door.jpg" : "drive.jpg");
+                   (id(cam_selected) == 1 ? "door_" : "drive_") +
+                   to_string(id(cam_tile)) + ".jpg?t=" + to_string(millis());
       - component.update: cam_img
+
+  # A tap while a picture is on screen: close after the finger lifts, so the
+  # tap can't land on a button underneath the pop-up.
+  - id: close_cam_soon
+    mode: single
+    then:
+      - delay: 500ms
+      - script.execute: close_cam
 
   - id: close_cam
     then:
       - script.stop: show_cam
+      - globals.set: { id: cam_painting, value: "false" }
       - lvgl.widget.hide: dlg_cam
+      - lvgl.resume:
+      - lvgl.widget.redraw:
       - script.execute: apply_theme
       - if:
           condition:
@@ -895,8 +1010,7 @@ lvgl:
             - globals.set: { id: cam_woke_screen, value: "false" }
             - script.execute: close_cam
           widgets:
-            # left 330x320: the picture, scaled to fit (see on_download_finished)
-            - image: { id: img_cam, x: 0, y: 0, width: 330, height: 320, hidden: true, src: cam_img }
+            # left 330x320: camera strips are painted here directly (LVGL paused)
             - label:
                 id: lbl_cam_status
                 x: 0

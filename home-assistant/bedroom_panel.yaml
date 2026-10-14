@@ -5,8 +5,8 @@
 # Camera snapshots for the panel. Eufy's saved event thumbnails can't be
 # decoded outside the Eufy app, and its photos are 100-300 KB - far too big
 # for the panel's RAM. So whenever a camera sees something, HA grabs a live
-# frame through the Eufy add-on, shrinks it to ~5 KB and keeps it as
-# door.jpg / drive.jpg. The panel just downloads the stored picture when
+# frame through the Eufy add-on and keeps it as full-size strips
+# door_0.jpg.. / drive_0.jpg.. (see panel_snapshot.py). The panel just downloads the stored picture when
 # tapped (instant), and the time it was taken is shown next to it. Random
 # folder name so the file can't be guessed.
 shell_command:
@@ -22,6 +22,13 @@ input_text:
   panel_cam_drive_time:
     name: Panel Driveway picture time
     max: 40
+  # "WxHxN": picture size and number of 48-row strips (see panel_snapshot.py)
+  panel_cam_door_geo:
+    name: Panel Front Door picture size
+    max: 20
+  panel_cam_drive_geo:
+    name: Panel Driveway picture size
+    max: 20
 
 automation:
   - alias: "Panel - update stored camera picture"
@@ -83,6 +90,12 @@ script:
           - condition: template
             value_template: "{{ shrink.returncode == 0 }}"
         then:
+          # size first: the panel starts painting when the time changes
+          - service: input_text.set_value
+            target:
+              entity_id: "input_text.panel_cam_{{ name }}_geo"
+            data:
+              value: "{{ shrink.stdout | trim }}"
           - service: input_text.set_value
             target:
               entity_id: "input_text.panel_cam_{{ name }}_time"

@@ -6,10 +6,11 @@ ffmpeg / Pillow / the panel's JPEGDEC reject the file. This pads every short
 DQT segment, then uses ffmpeg to write a small baseline JPEG.
 
 Usage: python3 panel_snapshot.py <folder> <name>
-  reads  <folder>/<name>_full.jpg, writes <folder>/<name>.jpg
+  reads  <folder>/<name>_full.jpg, writes <folder>/<name>_0.jpg .. _N.jpg
+  (horizontal strips) and prints "WxHxN" for the panel.
 
-<name>.jpg is only replaced once the new picture is complete, so the panel
-can always download the last good one.
+Strips are only replaced once all new ones are written, so the panel can
+always download the last good picture.
 """
 import os
 import struct
@@ -19,8 +20,6 @@ import sys
 folder, name = sys.argv[1], sys.argv[2]
 src = f"{folder}/{name}_full.jpg"
 fixed = f"{folder}/{name}_fixed.jpg"
-out = f"{folder}/{name}.jpg"
-tmp = f"{folder}/{name}_new.jpg"
 
 data = open(src, "rb").read()
 
@@ -59,17 +58,39 @@ while i < len(data) - 3:
     i = end
 
 open(fixed, "wb").write(bytes(res))
-# ~23k pixels keeps the decoded picture (~46 KB) inside the panel's RAM; the
-# panel shows it at real size (LVGL scaling garbles it). Red and blue are
-# swapped because the panel's display (BGR) draws photos with them reversed.
+# The panel has no PSRAM, so it can't hold a full-size picture at once (and
+# LVGL scaling garbles it). Instead the picture is sized to fill the 330x320
+# box on the panel at full resolution and cut into strips 48 rows tall
+# (<= ~32 KB decoded each). The panel downloads and paints them one by one.
+# Red and blue are swapped because the panel's display (BGR) draws photos
+# with them reversed; 4:2:0 because its JPEG decoder rejects 4:4:4.
+BOX_W, BOX_H, STRIP = 330, 320, 48
+big = f"{folder}/{name}_big.png"
 subprocess.run(
     ["ffmpeg", "-y", "-loglevel", "error", "-i", fixed,
-     "-vf", "scale=trunc(sqrt(23000*iw/ih)/2)*2:-2,"
-            "colorchannelmixer=rr=0:rb=1:bb=0:br=1,"
-            # back to 4:2:0 - the mixer makes ffmpeg write 4:4:4, which the
-            # panel's JPEG decoder rejects ("Error while decoding: 2")
-            "format=yuvj420p",
-     "-q:v", "6", tmp],
+     "-vf", f"scale={BOX_W}:{BOX_H}:force_original_aspect_ratio=decrease,"
+            "scale=trunc(iw/2)*2:trunc(ih/2)*2,"
+            "colorchannelmixer=rr=0:rb=1:bb=0:br=1",
+     big],
     check=True,
 )
-os.replace(tmp, out)
+probe = subprocess.run(
+    ["ffprobe", "-v", "error", "-show_entries", "stream=width,height",
+     "-of", "csv=p=0", big],
+    check=True, capture_output=True, text=True,
+).stdout.strip().split(",")
+w, h = int(probe[0]), int(probe[1])
+n = (h + STRIP - 1) // STRIP
+for i in range(n):
+    rows = min(STRIP, h - i * STRIP)
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", big,
+         "-vf", f"crop={w}:{rows}:0:{i * STRIP},format=yuvj420p",
+         "-q:v", "4", f"{folder}/{name}_{i}_new.jpg"],
+        check=True,
+    )
+for i in range(n):
+    os.replace(f"{folder}/{name}_{i}_new.jpg", f"{folder}/{name}_{i}.jpg")
+os.remove(big)
+# geometry for the panel: width x height x strips
+print(f"{w}x{h}x{n}")
