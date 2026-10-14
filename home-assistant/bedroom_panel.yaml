@@ -1,6 +1,7 @@
 # Scenes for the bedroom ESPHome touch panel (esphome/bedroom-panel.yaml).
 # Never turned off by these scenes: bedroom fan, fridge light, Bathroom LED
-# (light.bathroom_led_tasmota) and the kitchen WLED strip (handled separately).
+# (light.bathroom_led_tasmota), front door and back porch lights, and the
+# kitchen WLED strip (handled separately).
 script:
   panel_all_off:
     alias: "All Off"
@@ -22,7 +23,6 @@ script:
             - light.sw_kitchen_tasmota
             - light.livingroom_dimmer_tasmota
             - light.livingroom_dimmer_2_tasmota
-            - light.sw_front_door_tasmota
             - light.driveway_sw_tasmota
             - light.back_yard_sw_tasmota
             - light.garage_inside_tasmota
@@ -35,7 +35,6 @@ script:
           entity_id: &off_light_switches
             - switch.kitchen_acc_tasmota
             - switch.dinning_acc_tasmota
-            - switch.porch_tasmota
 
   panel_good_night:
     alias: "Good Night"
