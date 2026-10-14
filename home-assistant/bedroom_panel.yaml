@@ -45,14 +45,26 @@ script:
       - service: shell_command.panel_clear_snapshot
         data:
           name: "{{ name }}"
-      - service: eufy_event_gateway.capture_snapshot
-        target:
-          entity_id: "{{ camera }}"
-        data:
-          filename: "/config/www/panel_CHANGE_ME_RANDOM/{{ name }}_full.jpg"
-      - service: shell_command.panel_shrink_snapshot
-        data:
-          name: "{{ name }}"
+      # Retry if the add-on handed back the undecodable event thumbnail.
+      - repeat:
+          sequence:
+            - service: eufy_event_gateway.capture_snapshot
+              target:
+                entity_id: "{{ camera }}"
+              data:
+                filename: "/config/www/panel_CHANGE_ME_RANDOM/{{ name }}_full.jpg"
+            - service: shell_command.panel_shrink_snapshot
+              data:
+                name: "{{ name }}"
+              response_variable: shrink
+            - if:
+                - condition: template
+                  value_template: "{{ shrink.returncode != 0 }}"
+              then:
+                - delay: { milliseconds: 800 }
+          until:
+            - condition: template
+              value_template: "{{ shrink.returncode == 0 or repeat.index >= 3 }}"
 
   panel_all_off:
     alias: "All Off"

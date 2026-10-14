@@ -18,6 +18,17 @@ fixed = f"{folder}/{name}_fixed.jpg"
 out = f"{folder}/{name}.jpg"
 
 data = open(src, "rb").read()
+
+# Right at a doorbell/person event the add-on may hand back Eufy's 288x176
+# event thumbnail (which can't be decoded) instead of a live frame. Exit 3 so
+# the HA script captures again.
+_i = 2
+while _i < len(data) - 9:
+    if data[_i] == 0xFF and data[_i + 1] in (0xC0, 0xC2):
+        if (data[_i + 7] << 8 | data[_i + 8]) <= 320:
+            sys.exit(3)
+        break
+    _i += 1
 res = bytearray(data[:2])  # SOI
 i = 2
 while i < len(data) - 3:
