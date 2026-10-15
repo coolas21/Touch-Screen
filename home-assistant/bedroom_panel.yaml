@@ -191,7 +191,7 @@ script:
   # than that fight its ramp (it stalled around 50%). So: one step every
   # 1.5 s, giving each ~1 s ramp time to finish before the next.
   # Brighter start = longer fade: 1.5 s + 0.06 s per percent, plus one extra
-  # 1.5 s step at 5% (100% -> 9 s, 50% -> 6 s). Steps ease out (bigger
+  # 1.5 s step at 5% and a 1.5 s hold at 1% (100% -> 10.5 s, 50% -> 7.5 s). Steps ease out (bigger
   # drops at the top, smaller near the bottom) since LEDs look less
   # different at high brightness. Does nothing if it's already off.
   panel_fade_off:
@@ -228,6 +228,10 @@ script:
                   {% endif %}
             - delay:
                 milliseconds: "{{ interval_ms }}"
+      # the dimmer only reaches 1% about a second after the command, so hold
+      # it there one more step before turning off
+      - delay:
+          milliseconds: "{{ interval_ms }}"
       - service: light.turn_off
         target:
           entity_id: "{{ entity }}"
